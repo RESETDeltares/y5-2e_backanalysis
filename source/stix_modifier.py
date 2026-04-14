@@ -12,7 +12,7 @@ from source.constants.constants import CalculationMethod, SoilParameterTable, So
 from source.constants.load_cases import LoadCase
 from source.constants.locations import Location
 from source.constants.safety_format import SafetyFormat, SAFETY_FORMATS_DEFAULT
-from source.utils import read_dgs, get_soil_parameter_table_LNA, get_soil_code
+from source.utils import read_dgs, get_calc_settings_map, get_soil_parameter_table_LNA, get_soil_code
 
 
 def adjust_su_table(data, su_factor, pop=0., cut_off=0.):
@@ -741,8 +741,9 @@ def set_uplift_van(data):
     # res = data['results/bishopbruteforce/bishopbruteforceresult']
     # circle_center_bishop = res['Circle']["Center"]
     #
-    calc = data['calculationsettings/calculationsettings_1']
-    # tangent_lines_bishop = data['calculationsettings/calculationsettings']['BishopBruteForce'][
+    calc_map = get_calc_settings_map(data)
+    calc = data[calc_map['UpliftVanParticleSwarm']]
+    # tangent_lines_bishop = data[calc_map['BishopBruteForce']]['BishopBruteForce'][
     #     'TangentLines']  # BottomTangentLineZ  #Space #NumberOFTangentLines
     #
     calc['AnalysisType'] = 'UpliftVanParticleSwarm'
@@ -766,13 +767,15 @@ def set_uplift_van(data):
 
 
 def set_spencer(data, stix_path):
-    calc = data['calculationsettings/calculationsettings']
+    calc_map = get_calc_settings_map(data)
+    calc = data[calc_map['BishopBruteForce']]
     calc['AnalysisType'] = 'Spencer'
     calc['Spencer']['SlipPlaneConstraints'] = calc['BishopBruteForce']['SlipPlaneConstraints']
 
     template_spencer_stix = stix_path.parent.joinpath('template_method', 'SPENCER.stix')
     template_data = read_dgs(template_spencer_stix)
-    calc_template = template_data['calculationsettings/calculationsettings']['SpencerGenetic']
+    template_calc_map = get_calc_settings_map(template_data)
+    calc_template = template_data[template_calc_map['BishopBruteForce']]['SpencerGenetic']
     input_slipplane_A = calc_template['SlipPlaneA']
     input_slipplane_B = calc_template['SlipPlaneB']
 
@@ -813,11 +816,12 @@ def remove_states(data: dict) -> dict:
 
 
 def set_fixed_slip_plane(data: dict):
-    calc_bishop = data['calculationsettings/calculationsettings']
+    calc_map = get_calc_settings_map(data)
+    calc_bishop = data[calc_map['BishopBruteForce']]
     calc_bishop['AnalysisType'] = 'Bishop'
     calc_bishop['Bishop']["Circle"] = data['results/bishopbruteforce/bishopbruteforceresult']['Circle']
 
-    calc_uplift = data['calculationsettings/calculationsettings_1']
+    calc_uplift = data[calc_map['UpliftVanParticleSwarm']]
     res_upliftswarm =  data['results/upliftvanparticleswarm/upliftvanparticleswarmresult']
     calc_uplift['AnalysisType'] = 'UpliftVan'
     calc_uplift['UpliftVan']['SlipPlane'] = {"FirstCircleCenter" : {'X': None, 'Z': None}, "FirstCircleRadius": None,

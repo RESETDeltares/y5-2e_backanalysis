@@ -215,6 +215,13 @@ class CalculationMethod(Enum):
     SPENCER = 3
 
 
+CALCULATION_METHOD_ANALYSIS_TYPE = {
+    CalculationMethod.BISHOP:    'BishopBruteForce',
+    CalculationMethod.UPLIFTVAN: 'UpliftVanParticleSwarm',
+    CalculationMethod.SPENCER:   'SpencerGenetic',
+}
+
+
 class SoilParameterTable(Enum):
     """Enum for the soil parameter table."""
 

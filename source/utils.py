@@ -22,6 +22,24 @@ def read_dgs(filename):
 
     return data
 
+def get_calc_settings_map(data: dict) -> dict:
+    """
+    Scans all calculationsettings entries in STIX data and returns a mapping
+    from AnalysisType to the dict key in data.
+
+    Example return:
+      {'BishopBruteForce': 'calculationsettings/calculationsettings',
+       'UpliftVanParticleSwarm': 'calculationsettings/calculationsettings_1'}
+    """
+    result = {}
+    for key, value in data.items():
+        if key.startswith('calculationsettings/'):
+            analysis_type = value.get('AnalysisType')
+            if analysis_type:
+                result[analysis_type] = key
+    return result
+
+
 def write_dgs(filename: Path, data):
     """
     """
