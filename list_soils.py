@@ -29,7 +29,7 @@ soils = data[soils_key]["Soils"]
 # Build LayerId -> SoilCode mapping via soillayers
 layers_key = next((k for k in data if "soillayers" in k.lower()), None)
 layers = data[layers_key]["SoilLayers"]
-layer_to_soil_id = {layer["Id"]: layer["SoilId"] for layer in layers}
+layer_to_soil_id = {layer["LayerId"]: layer["SoilId"] for layer in layers}
 soil_id_to_code = {s["Id"]: s["Code"] for s in soils}
 
 # Build SoilCode -> list of POPs from states
