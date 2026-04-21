@@ -18,42 +18,42 @@ The goal is to efficiently explore which parameter combinations best reproduce o
 
 ```
 backcalculations/
-â”œâ”€â”€ baseline_models/                # Baseline STIX files + their run Excel files
-â”‚   â”œâ”€â”€ bergambacht.stix
-â”‚   â”œâ”€â”€ bergambacht_runs.xlsx       # Run definitions for bergambacht
-â”‚   â”œâ”€â”€ eemdijk.stix
-â”‚   â”œâ”€â”€ eemdijk_runs.xlsx
-â”‚   â”œâ”€â”€ ijkdijk.stix
-â”‚   â””â”€â”€ ijkdijk_runs.xlsx
-â”‚
-â”œâ”€â”€ results/                        # Auto-created output folder
-â”‚   â””â”€â”€ <model_name>/
-â”‚       â””â”€â”€ <run_id>/
-â”‚           â””â”€â”€ <model>_<run_id>.stix   # Modified STIX with D-Stability results
-â”‚
-â”œâ”€â”€ su_tables/                      # Optional: SuTable JSON files for tabulated strength
-â”‚
-â”œâ”€â”€ exploration/                    # Scripts to inspect STIX files (read-only, no edits)
-â”‚   â”œâ”€â”€ explore_stix.py             # Full structure overview of any STIX file
-â”‚   â”œâ”€â”€ list_soils.py               # All soils with strength model and parameters
-â”‚   â””â”€â”€ inspect_states.py          # All state points with POP values
-â”‚
-â”œâ”€â”€ source/
-â”‚   â”œâ”€â”€ stix_io.py                  # Read/write STIX files, extract soils/layers/states
-â”‚   â”œâ”€â”€ stix_modifier.py            # Legacy soil modification functions (old system)
-â”‚   â”œâ”€â”€ utils.py                    # Legacy utilities (old system)
-â”‚   â”œâ”€â”€ constants/
-â”‚   â”‚   â”œâ”€â”€ constants.py            # D-Stability binary path, enums, dataclasses
-â”‚   â”‚   â””â”€â”€ safety_format.py        # Safety format definitions
-â”‚   â””â”€â”€ __init__.py
-â”‚
-â”œâ”€â”€ generate_template.py            # Generate Excel run templates from baseline STIX
-â”œâ”€â”€ run_model.py                    # Main run engine (reads Excel, runs D-Stability)
-â”‚
-â”œâ”€â”€ run_attempt.py                  # Legacy runner (JSON-config based, kept for reference)
-â”œâ”€â”€ compare_attempts.py             # Legacy comparison tool
-â”œâ”€â”€ attempts_config/                # Legacy JSON configs
-â””â”€â”€ attempts_tracking.xlsx          # Legacy tracking table
++-- baseline_models/                # Baseline STIX files + their run Excel files
+|   +-- bergambacht.stix
+|   +-- bergambacht_runs.xlsx       # Run definitions for bergambacht
+|   +-- eemdijk.stix
+|   +-- eemdijk_runs.xlsx
+|   +-- ijkdijk.stix
+|   +-- ijkdijk_runs.xlsx
+|
++-- results/                        # Auto-created output folder
+|   +-- <model_name>/
+|       +-- <run_id>/
+|           +-- <model>_<run_id>.stix   # Modified STIX with D-Stability results
+|
++-- su_tables/                      # Optional: SuTable JSON files for tabulated strength
+|
++-- exploration/                    # Scripts to inspect STIX files (read-only, no edits)
+|   +-- explore_stix.py             # Full structure overview of any STIX file
+|   +-- list_soils.py               # All soils with strength model and parameters
+|   +-- inspect_states.py          # All state points with POP values
+|
++-- source/
+|   +-- stix_io.py                  # Read/write STIX files, extract soils/layers/states
+|   +-- stix_modifier.py            # Legacy soil modification functions (old system)
+|   +-- utils.py                    # Legacy utilities (old system)
+|   +-- constants/
+|   |   +-- constants.py            # D-Stability binary path, enums, dataclasses
+|   |   +-- safety_format.py        # Safety format definitions
+|   +-- __init__.py
+|
++-- generate_template.py            # Generate Excel run templates from baseline STIX
++-- run_model.py                    # Main run engine (reads Excel, runs D-Stability)
+|
++-- run_attempt.py                  # Legacy runner (JSON-config based, kept for reference)
++-- compare_attempts.py             # Legacy comparison tool
++-- attempts_config/                # Legacy JSON configs
++-- attempts_tracking.xlsx          # Legacy tracking table
 ```
 
 ---
