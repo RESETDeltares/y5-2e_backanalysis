@@ -90,7 +90,7 @@ def get_params(soil):
 print(f"\n{'#':<4} {'Code':<35} {'Model':<25} {'POP (kPa)':<20} {'Parameters'}")
 print("-" * 140)
 for i, s in enumerate(soils, 1):
-    code  = s.get("Code", "N/A")
+    code = s.get("Code", "N/A")
     model = s.get("ShearStrengthModelTypeBelowPhreaticLevel", "N/A")
     params = get_params(s)
     param_str = "  ".join(f"{k}={v}" for k, v in params.items())
