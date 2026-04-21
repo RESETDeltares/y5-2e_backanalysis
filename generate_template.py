@@ -30,6 +30,7 @@ from source.stix_io import (
     get_soils,
     get_calc_settings_map,
     get_soil_pop_map,
+    get_soil_layers_map,
 )
 
 
@@ -91,14 +92,22 @@ def build_runs_sheet(calc_methods: list) -> pd.DataFrame:
     return pd.DataFrame([row])
 
 
-def build_materials_sheet(soils: list, pop_map: dict) -> pd.DataFrame:
+def build_materials_sheet(soils: list, pop_map: dict, layers_map: dict) -> pd.DataFrame:
     """Build the materials sheet with baseline parameters for all soils."""
+    # layers_map: {scenario_label -> {soil_code -> [layer_label, ...]}}
+    scenario_labels = sorted(layers_map.keys())  # ['s1', 's2', ...]
+
     rows = []
     for soil in soils:
         row = extract_soil_params(soil)
         row["run_id"] = "baseline"
 
-        # Summarise POP into two columns: Layers (labels) and POP (values)
+        # One column per scenario showing which layers this soil occupies
+        for sc in scenario_labels:
+            assigned = layers_map[sc].get(row["material_code"], [])
+            row[f"layer_{sc}"] = ", ".join(assigned) if assigned else ""
+
+        # Summarise POP into two columns: state point labels and values
         pops = pop_map.get(row["material_code"], [])
         if pops:
             row["Layers"] = ", ".join(label for label, _ in pops)
@@ -109,11 +118,12 @@ def build_materials_sheet(soils: list, pop_map: dict) -> pd.DataFrame:
 
         rows.append(row)
 
-    # Reorder so run_id and material_code come first
     df = pd.DataFrame(rows)
+    layer_cols = [f"layer_{sc}" for sc in scenario_labels]
     cols = [
         "run_id",
         "material_code",
+        *layer_cols,
         "active_model",
         "gamma_dry",
         "gamma_wet",
@@ -178,6 +188,7 @@ def generate_for_stix(stix_path: Path) -> None:
 
     soils = get_soils(data)
     pop_map = get_soil_pop_map(data)
+    layers_map = get_soil_layers_map(data)
     calc_map = get_calc_settings_map(data)
     calc_methods = [METHOD_LABELS.get(k, k) for k in calc_map.keys()]
 
@@ -185,7 +196,7 @@ def generate_for_stix(stix_path: Path) -> None:
     print(f"  Found calc methods: {calc_methods}")
 
     df_runs = build_runs_sheet(calc_methods)
-    df_materials = build_materials_sheet(soils, pop_map)
+    df_materials = build_materials_sheet(soils, pop_map, layers_map)
     df_su_tables = build_su_tables_sheet()
     df_results = build_results_sheet(calc_methods)
 

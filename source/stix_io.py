@@ -138,3 +138,47 @@ def get_soil_pop_map(data: dict) -> dict:
                 result.setdefault(soil_code, []).append((label, pop))
 
     return result
+
+
+def get_soil_layers_map(data: dict) -> dict:
+    """
+    Build a mapping from scenario_label -> {soil_code -> [layer_label, ...]}.
+
+    Labels come from geometries/geometry* (each layer has Id + Label).
+    soillayers/* links geometry layer Ids to soil Ids via LayerId.
+    Each soillayers key (soillayers/soillayers, soillayers/soillayers_1, ...)
+    becomes one scenario entry labelled 's1', 's2', etc.
+    """
+    soils = get_soils(data)
+    soil_id_to_code = {s["Id"]: s["Code"] for s in soils}
+
+    # Build geometry Id -> Label for every geometry resource
+    geo_id_to_label = {}
+    for k, v in data.items():
+        if k.startswith("geometries/"):
+            for layer in v.get("Layers", []):
+                geo_id_to_label[layer["Id"]] = layer.get("Label", layer["Id"])
+
+    # Walk soillayers sets in sorted order -> s1, s2, ...
+    sl_keys = sorted(k for k in data if k.startswith("soillayers/")
+                     and "visual" not in k.lower())
+
+    result = {}  # {scenario_label: {soil_code: [layer_label, ...]}}
+    for i, sl_key in enumerate(sl_keys, start=1):
+        scenario_label = f"s{i}"
+        scenario_map: dict[str, list] = {}
+        for layer in data[sl_key].get("SoilLayers", []):
+            soil_id = layer.get("SoilId")
+            soil_code = soil_id_to_code.get(soil_id)
+            if not soil_code:
+                continue
+            layer_id = layer.get("LayerId", "")
+            label = geo_id_to_label.get(layer_id, layer_id)
+            scenario_map.setdefault(soil_code, []).append(label)
+        # Deduplicate within scenario
+        result[scenario_label] = {
+            code: list(dict.fromkeys(labels))
+            for code, labels in scenario_map.items()
+        }
+
+    return result
