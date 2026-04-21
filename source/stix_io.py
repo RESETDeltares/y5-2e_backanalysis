@@ -160,8 +160,9 @@ def get_soil_layers_map(data: dict) -> dict:
                 geo_id_to_label[layer["Id"]] = layer.get("Label", layer["Id"])
 
     # Walk soillayers sets in sorted order -> s1, s2, ...
-    sl_keys = sorted(k for k in data if k.startswith("soillayers/")
-                     and "visual" not in k.lower())
+    sl_keys = sorted(
+        k for k in data if k.startswith("soillayers/") and "visual" not in k.lower()
+    )
 
     result = {}  # {scenario_label: {soil_code: [layer_label, ...]}}
     for i, sl_key in enumerate(sl_keys, start=1):
@@ -177,8 +178,7 @@ def get_soil_layers_map(data: dict) -> dict:
             scenario_map.setdefault(soil_code, []).append(label)
         # Deduplicate within scenario
         result[scenario_label] = {
-            code: list(dict.fromkeys(labels))
-            for code, labels in scenario_map.items()
+            code: list(dict.fromkeys(labels)) for code, labels in scenario_map.items()
         }
 
     return result
