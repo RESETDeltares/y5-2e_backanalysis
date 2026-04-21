@@ -1,11 +1,13 @@
 """
-Generate Excel run template from a baseline STIX file.
+Generate Excel run template(s) from baseline STIX file(s).
 
 Usage:
-    python generate_template.py baseline_models/bergambacht_reviewed.stix
+    python generate_template.py                    # all .stix in baseline_models/
+    python generate_template.py baseline_models/bergambacht.stix   # one file
+    python generate_template.py baseline_models/bergambacht.stix baseline_models/eemdijk.stix
 
-This creates an Excel file next to the STIX file:
-    baseline_models/bergambacht_reviewed_runs.xlsx
+This creates an Excel file next to each STIX file:
+    baseline_models/<name>_runs.xlsx
 
 Sheets:
     runs        - One row per run: description, calc methods to run
@@ -29,12 +31,6 @@ from source.stix_io import (
     get_calc_settings_map,
     get_soil_pop_map,
 )
-
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-STIX_FILE = "baseline_models/bergambacht_reviewed.stix"
-# ============================================================================
 
 
 def extract_soil_params(soil: dict) -> dict:
@@ -162,39 +158,37 @@ def style_sheet(ws, header_color="1F4E79"):
         )
 
 
-def main():
-    project_root = Path(__file__).parent
-    stix_path = project_root / STIX_FILE
+METHOD_LABELS = {
+    "BishopBruteForce": "bishop",
+    "UpliftVanParticleSwarm": "upliftvan",
+    "SpencerGenetic": "spencer",
+}
 
-    if not stix_path.exists():
-        print(f"ERROR: STIX file not found: {stix_path}")
-        sys.exit(1)
+SHEET_COLORS = {
+    "runs": "1F4E79",
+    "materials": "375623",
+    "su_tables": "7B3F00",
+    "results": "4A235A",
+}
 
-    print(f"Reading: {stix_path.name}")
+
+def generate_for_stix(stix_path: Path) -> None:
+    print(f"\nReading: {stix_path.name}")
     data = read_stix(stix_path)
 
     soils = get_soils(data)
     pop_map = get_soil_pop_map(data)
     calc_map = get_calc_settings_map(data)
-
-    # Use short names for calc methods
-    METHOD_LABELS = {
-        "BishopBruteForce": "bishop",
-        "UpliftVanParticleSwarm": "upliftvan",
-        "SpencerGenetic": "spencer",
-    }
     calc_methods = [METHOD_LABELS.get(k, k) for k in calc_map.keys()]
 
     print(f"  Found {len(soils)} soils")
     print(f"  Found calc methods: {calc_methods}")
 
-    # Build sheets
     df_runs = build_runs_sheet(calc_methods)
     df_materials = build_materials_sheet(soils, pop_map)
     df_su_tables = build_su_tables_sheet()
     df_results = build_results_sheet(calc_methods)
 
-    # Write Excel
     output_path = stix_path.with_name(stix_path.stem + "_runs.xlsx")
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_runs.to_excel(writer, sheet_name="runs", index=False)
@@ -202,25 +196,38 @@ def main():
         df_su_tables.to_excel(writer, sheet_name="su_tables", index=False)
         df_results.to_excel(writer, sheet_name="results", index=False)
 
-    # Apply styling
     wb = load_workbook(output_path)
-    SHEET_COLORS = {
-        "runs": "1F4E79",
-        "materials": "375623",
-        "su_tables": "7B3F00",
-        "results": "4A235A",
-    }
     for sheet_name, color in SHEET_COLORS.items():
         if sheet_name in wb.sheetnames:
             style_sheet(wb[sheet_name], header_color=color)
     wb.save(output_path)
 
-    print(f"\n✓ Template created: {output_path}")
-    print(f"\nSheets:")
-    print(f"  runs      - Define your runs here (add rows for run_1, run_2, ...)")
-    print(f"  materials - Define parameter changes per run (empty cell = use baseline)")
-    print(f"  su_tables - Register SuTable JSON files here")
-    print(f"  results   - Filled automatically by run_model.py")
+    print(f"  ✓ Template created: {output_path.name}")
+
+
+def main():
+    project_root = Path(__file__).parent
+
+    if len(sys.argv) > 1:
+        stix_paths = [project_root / arg for arg in sys.argv[1:]]
+    else:
+        stix_paths = sorted((project_root / "baseline_models").glob("*.stix"))
+
+    if not stix_paths:
+        print("ERROR: No STIX files found in baseline_models/")
+        sys.exit(1)
+
+    for stix_path in stix_paths:
+        if not stix_path.exists():
+            print(f"  WARNING: not found, skipping: {stix_path}")
+            continue
+        generate_for_stix(stix_path)
+
+    print(f"\nDone. {len(stix_paths)} template(s) generated.")
+    print("  runs      - Define your runs here (add rows for run_1, run_2, ...)")
+    print("  materials - Define parameter changes per run (empty cell = use baseline)")
+    print("  su_tables - Register SuTable JSON files here")
+    print("  results   - Filled automatically by run_model.py")
 
 
 if __name__ == "__main__":
