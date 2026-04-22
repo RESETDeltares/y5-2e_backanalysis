@@ -119,9 +119,11 @@ def build_materials_sheet(soils: list, pop_map: dict, layers_map: dict) -> pd.Da
         rows.append(row)
 
     df = pd.DataFrame(rows)
+    df["simple_description"] = ""
     layer_cols = [f"layer_{sc}" for sc in scenario_labels]
     cols = [
         "run_id",
+        "simple_description",
         "material_code",
         *layer_cols,
         "active_model",

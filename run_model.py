@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
+
 
 sys.path.insert(0, str(Path(__file__).parent))
 from source.stix_io import (
@@ -32,11 +32,6 @@ from source.stix_io import (
 )
 from source.constants.constants import DSTABILITY_BIN_FOLDER
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-STIX_FILE = "baseline_models/bergambacht_reviewed.stix"
-# ============================================================================
 
 ANALYSIS_TYPE_TO_RESULT_KEY = {
     "BishopBruteForce": "results/bishopbruteforce/bishopbruteforceresult",
@@ -215,19 +210,15 @@ def run_dstability(stix_path: Path, analysis_types: list) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def main():
-    project_root = Path(__file__).parent
-    stix_path = project_root / STIX_FILE
+def run_model(stix_path: Path, project_root: Path) -> None:
+    """Process all runs for a single STIX baseline file."""
     excel_path = stix_path.with_name(stix_path.stem + "_runs.xlsx")
     output_root = project_root / "results" / stix_path.stem
 
-    if not stix_path.exists():
-        print(f"ERROR: STIX file not found: {stix_path}")
-        sys.exit(1)
     if not excel_path.exists():
-        print(f"ERROR: Excel run file not found: {excel_path}")
-        print(f"Run generate_template.py first.")
-        sys.exit(1)
+        print(f"  WARNING: No runs Excel found for {stix_path.name}, skipping.")
+        print(f"  (Run generate_template.py first.)")
+        return
 
     print(f"\n{'='*70}")
     print(f"  Model: {stix_path.name}")
@@ -237,8 +228,6 @@ def main():
     # Read Excel
     df_runs = pd.read_excel(excel_path, sheet_name="runs")
     df_materials = pd.read_excel(excel_path, sheet_name="materials")
-    wb = load_workbook(excel_path)
-    ws_results = wb["results"]
 
     # Determine calc method columns in runs sheet
     method_cols = [c for c in df_runs.columns if c.startswith("run_")]
@@ -250,6 +239,14 @@ def main():
         run_id = run_row["run_id"]
         description = run_row.get("description", "")
         print(f"\n--- Run: {run_id} | {description} ---")
+
+        # Skip if output STIX already exists
+        output_stix = output_root / str(run_id) / f"{stix_path.stem}_{run_id}.stix"
+        if output_stix.exists():
+            print(
+                f"  Already computed, skipping. (Delete {output_stix.name} to rerun.)"
+            )
+            continue
 
         # Which methods to run
         analysis_types = []
@@ -276,9 +273,7 @@ def main():
             data = apply_material_changes(data, run_materials)
 
         # Save modified STIX
-        run_output_dir = output_root / run_id
-        run_output_dir.mkdir(parents=True, exist_ok=True)
-        output_stix = run_output_dir / f"{stix_path.stem}_{run_id}.stix"
+        output_stix.parent.mkdir(parents=True, exist_ok=True)
         write_stix(output_stix, data)
         print(f"  Saved: {output_stix.name}")
 
@@ -312,6 +307,21 @@ def main():
 
     print(f"\n✓ Results written to: {excel_path}")
     print(f"{'='*70}\n")
+
+
+def main():
+    project_root = Path(__file__).parent
+    baseline_dir = project_root / "baseline_models"
+
+    stix_files = sorted(baseline_dir.glob("*.stix"))
+    if not stix_files:
+        print(f"ERROR: No .stix files found in {baseline_dir}")
+        sys.exit(1)
+
+    print(f"Found {len(stix_files)} model(s): {[f.name for f in stix_files]}")
+
+    for stix_path in stix_files:
+        run_model(stix_path, project_root)
 
 
 if __name__ == "__main__":
