@@ -50,66 +50,159 @@ METHOD_LABEL_TO_ANALYSIS_TYPE = {
 # Soil modification
 # ---------------------------------------------------------------------------
 
+import copy
+import uuid as _uuid
+
+
+def _apply_soil_params(soil: dict, row: pd.Series) -> None:
+    """Apply parameter columns from one Excel row onto a soil dict in-place."""
+    active_model = row.get("active_model")
+
+    if pd.notna(row.get("gamma_dry")):
+        soil["VolumetricWeightAbovePhreaticLevel"] = float(row["gamma_dry"])
+    if pd.notna(row.get("gamma_wet")):
+        soil["VolumetricWeightBelowPhreaticLevel"] = float(row["gamma_wet"])
+
+    if pd.notna(active_model) and active_model:
+        soil["ShearStrengthModelTypeAbovePhreaticLevel"] = active_model
+        soil["ShearStrengthModelTypeBelowPhreaticLevel"] = active_model
+
+    if pd.notna(row.get("Su_S")) or pd.notna(row.get("Su_m")):
+        m = soil.setdefault("SuShearStrengthModel", {})
+        if pd.notna(row.get("Su_S")):
+            m["ShearStrengthRatio"] = float(row["Su_S"])
+        if pd.notna(row.get("Su_m")):
+            m["StrengthIncreaseExponent"] = float(row["Su_m"])
+
+    for model_key in [
+        "MohrCoulombAdvancedShearStrengthModel",
+        "MohrCoulombClassicShearStrengthModel",
+    ]:
+        if pd.notna(row.get("MC_phi")) or pd.notna(row.get("MC_c")):
+            m = soil.setdefault(model_key, {})
+            if pd.notna(row.get("MC_phi")):
+                m["FrictionAngle"] = float(row["MC_phi"])
+            if pd.notna(row.get("MC_c")):
+                m["Cohesion"] = float(row["MC_c"])
+            if pd.notna(row.get("MC_psi")):
+                m["Dilatancy"] = float(row["MC_psi"])
+
+    su_table_key = row.get("su_table_key")
+    if pd.notna(su_table_key) and su_table_key:
+        _apply_su_table_from_key(soil, su_table_key)
+
+
+def _reassign_layers(data: dict, layer_labels: list, new_soil_id: str) -> None:
+    """Point all soillayer entries matching the given geometry labels to new_soil_id."""
+    # Build label -> geometry layer UUID map
+    geo_label_to_id = {}
+    for k, v in data.items():
+        if k.startswith("geometries/"):
+            for layer in v.get("Layers", []):
+                lbl = layer.get("Label", "")
+                if lbl:
+                    geo_label_to_id[lbl] = layer["Id"]
+
+    target_ids = {geo_label_to_id[l] for l in layer_labels if l in geo_label_to_id}
+    missing = [l for l in layer_labels if l not in geo_label_to_id]
+    if missing:
+        print(f"  WARNING: layer labels not found in geometry: {missing}")
+
+    for k in data:
+        if k.startswith("soillayers/") and "visual" not in k.lower():
+            for sl in data[k].get("SoilLayers", []):
+                if sl.get("LayerId") in target_ids:
+                    sl["SoilId"] = new_soil_id
+
 
 def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
-    """Apply parameter overrides from the materials sheet to loaded STIX data."""
+    """
+    Apply parameter overrides from the materials sheet to loaded STIX data.
+
+    When a row has a 'simple_description', a new soil is cloned from the base
+    material_code soil and assigned that description as its Code/Name.
+    All layers listed in layer_s1 are reassigned to the new soil.
+    Rows sharing the same simple_description share the same new soil.
+
+    Rows without a simple_description modify the base soil directly (legacy).
+    """
     soils = get_soils(data)
     soil_by_code = {s["Code"]: s for s in soils}
 
     for _, row in material_rows.iterrows():
-        code = row["material_code"]
-        if code not in soil_by_code:
-            print(f"  WARNING: material '{code}' not found in STIX, skipping.")
-            continue
+        base_code = row["material_code"]
+        description = str(row.get("simple_description", "") or "").strip()
+        layer_str = str(row.get("layer_s1", "") or "").strip()
 
-        soil = soil_by_code[code]
-        active_model = row.get("active_model")
+        has_description = bool(description)
+        has_layer = bool(layer_str)
 
-        # Unit weights
-        if pd.notna(row.get("gamma_dry")):
-            soil["VolumetricWeightAbovePhreaticLevel"] = float(row["gamma_dry"])
-        if pd.notna(row.get("gamma_wet")):
-            soil["VolumetricWeightBelowPhreaticLevel"] = float(row["gamma_wet"])
+        if has_description and has_layer:
+            # --- Clone-and-reassign path ---
+            # Stable clone key keeps link to original: e.g. "Material_BVN_RESET peat next (D)"
+            clone_code = f"{base_code}_{description}"
 
-        # Switch model if specified
-        if pd.notna(active_model) and active_model:
-            soil["ShearStrengthModelTypeAbovePhreaticLevel"] = active_model
-            soil["ShearStrengthModelTypeBelowPhreaticLevel"] = active_model
+            # Create the new soil once; reuse on subsequent rows with same clone_code
+            if clone_code not in soil_by_code:
+                base_soil = soil_by_code.get(base_code)
+                if not base_soil:
+                    print(
+                        f"  WARNING: base material '{base_code}' not found, skipping."
+                    )
+                    continue
+                new_soil = copy.deepcopy(base_soil)
+                new_soil_id = str(_uuid.uuid4())
+                new_soil["Id"] = new_soil_id
+                new_soil["Code"] = clone_code
+                new_soil["Name"] = clone_code
+                soils.append(new_soil)
+                soil_by_code[clone_code] = new_soil
 
-        # Su / SHANSEP
-        if pd.notna(row.get("Su_S")) or pd.notna(row.get("Su_m")):
-            m = soil.setdefault("SuShearStrengthModel", {})
-            if pd.notna(row.get("Su_S")):
-                m["ShearStrengthRatio"] = float(row["Su_S"])
-            if pd.notna(row.get("Su_m")):
-                m["StrengthIncreaseExponent"] = float(row["Su_m"])
+                # Copy visual style from the original soil
+                viz_list = data.get("soilvisualizations", {}).get(
+                    "SoilVisualizations", []
+                )
+                orig_viz = next(
+                    (v for v in viz_list if v.get("SoilId") == base_soil["Id"]), None
+                )
+                if orig_viz:
+                    viz_list.append({**orig_viz, "SoilId": new_soil_id})
 
-        # MohrCoulomb
-        for mc_key, model_key in [
-            ("MohrCoulombAdvanced", "MohrCoulombAdvancedShearStrengthModel"),
-            ("MohrCoulombClassic", "MohrCoulombClassicShearStrengthModel"),
-        ]:
-            if pd.notna(row.get("MC_phi")) or pd.notna(row.get("MC_c")):
-                m = soil.setdefault(model_key, {})
-                if pd.notna(row.get("MC_phi")):
-                    m["FrictionAngle"] = float(row["MC_phi"])
-                if pd.notna(row.get("MC_c")):
-                    m["Cohesion"] = float(row["MC_c"])
-                if pd.notna(row.get("MC_psi")):
-                    m["Dilatancy"] = float(row["MC_psi"])
+                print(f"  Cloned '{base_code}' -> '{clone_code}'")
 
-        # SuTable from JSON file
-        su_table_key = row.get("su_table_key")
-        if pd.notna(su_table_key) and su_table_key:
-            _apply_su_table_from_key(soil, su_table_key)
+            soil = soil_by_code[clone_code]
+            _apply_soil_params(soil, row)
 
-        # POP changes via Layers / POP columns
-        layers_str = row.get("Layers", "")
-        pop_str = row.get("POP", "")
-        if pd.notna(layers_str) and pd.notna(pop_str) and layers_str and pop_str:
-            labels = [s.strip() for s in str(layers_str).split(",")]
-            pop_vals = [float(s.strip()) for s in str(pop_str).split(",")]
-            _apply_pop_changes(data, code, dict(zip(labels, pop_vals)))
+            layer_labels = [l.strip() for l in layer_str.split(",")]
+            _reassign_layers(data, layer_labels, soil["Id"])
+
+            # POP changes use the clone code
+            layers_col = str(row.get("Layers", "") or "").strip()
+            pop_col = str(row.get("POP", "") or "").strip()
+            if layers_col and pop_col:
+                pop_labels = [s.strip() for s in layers_col.split(",")]
+                pop_vals = [float(s.strip()) for s in pop_col.split(",")]
+                _apply_pop_changes(data, clone_code, dict(zip(pop_labels, pop_vals)))
+
+        else:
+            # --- Direct-modify path (no description / no layer target) ---
+            soil = soil_by_code.get(base_code)
+            if not soil:
+                print(f"  WARNING: material '{base_code}' not found in STIX, skipping.")
+                continue
+
+            _apply_soil_params(soil, row)
+
+            if has_layer:
+                layer_labels = [l.strip() for l in layer_str.split(",")]
+                _reassign_layers(data, layer_labels, soil["Id"])
+
+            layers_col = str(row.get("Layers", "") or "").strip()
+            pop_col = str(row.get("POP", "") or "").strip()
+            if layers_col and pop_col:
+                pop_labels = [s.strip() for s in layers_col.split(",")]
+                pop_vals = [float(s.strip()) for s in pop_col.split(",")]
+                _apply_pop_changes(data, base_code, dict(zip(pop_labels, pop_vals)))
 
     return data
 
@@ -119,12 +212,22 @@ def _apply_su_table_from_key(soil: dict, su_table_key: str) -> None:
     import json
 
     project_root = Path(__file__).parent
-    table_path = project_root / "su_tables" / f"{su_table_key}.json"
+    table_path = project_root / "su_tables" / "su_tables.json"
     if not table_path.exists():
-        print(f"  WARNING: SuTable file not found: {table_path}")
+        print(f"  WARNING: su_tables.json not found: {table_path}")
         return
     with open(table_path) as f:
-        points = json.load(f)
+        all_tables = json.load(f)
+    if su_table_key not in all_tables:
+        print(f"  WARNING: key '{su_table_key}' not found in su_tables.json")
+        return
+    points = all_tables[su_table_key]
+    # Convert compact two-list format to D-Stability list-of-dicts
+    if isinstance(points, dict):
+        points = [
+            {"EffectiveStress": s, "Su": su}
+            for s, su in zip(points["EffectiveStress"], points["Su"])
+        ]
     soil["ShearStrengthModelTypeAbovePhreaticLevel"] = "SuTable"
     soil["ShearStrengthModelTypeBelowPhreaticLevel"] = "SuTable"
     soil.setdefault("SuTable", {})["SuTablePoints"] = points
