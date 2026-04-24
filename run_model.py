@@ -92,8 +92,13 @@ def _apply_soil_params(soil: dict, row: pd.Series) -> None:
         _apply_su_table_from_key(soil, su_table_key)
 
 
-def _reassign_layers(data: dict, layer_labels: list, new_soil_id: str) -> None:
-    """Point all soillayer entries matching the given geometry labels to new_soil_id."""
+def _reassign_layers(
+    data: dict, layer_labels: list, new_soil_id: str, sl_key: str = None
+) -> None:
+    """
+    Point soillayer entries matching the given geometry labels to new_soil_id.
+    If sl_key is given, only that soillayers set is updated; otherwise all sets.
+    """
     # Build label -> geometry layer UUID map
     geo_label_to_id = {}
     for k, v in data.items():
@@ -108,11 +113,17 @@ def _reassign_layers(data: dict, layer_labels: list, new_soil_id: str) -> None:
     if missing:
         print(f"  WARNING: layer labels not found in geometry: {missing}")
 
-    for k in data:
-        if k.startswith("soillayers/") and "visual" not in k.lower():
-            for sl in data[k].get("SoilLayers", []):
-                if sl.get("LayerId") in target_ids:
-                    sl["SoilId"] = new_soil_id
+    sl_keys_to_update = (
+        [sl_key]
+        if sl_key
+        else [
+            k for k in data if k.startswith("soillayers/") and "visual" not in k.lower()
+        ]
+    )
+    for k in sl_keys_to_update:
+        for sl in data[k].get("SoilLayers", []):
+            if sl.get("LayerId") in target_ids:
+                sl["SoilId"] = new_soil_id
 
 
 def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
@@ -129,13 +140,32 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
     soils = get_soils(data)
     soil_by_code = {s["Code"]: s for s in soils}
 
+    # Build sorted soillayers key list so layer_s1->index 0, layer_s2->index 1, etc.
+    sl_key_list = sorted(
+        k for k in data if k.startswith("soillayers/") and "visual" not in k.lower()
+    )
+
+    # Collect all layer_sN column names present in the dataframe
+    layer_cols = sorted(c for c in material_rows.columns if c.startswith("layer_s"))
+
     for _, row in material_rows.iterrows():
         base_code = row["material_code"]
         description = str(row.get("simple_description", "") or "").strip()
-        layer_str = str(row.get("layer_s1", "") or "").strip()
+
+        # Gather non-empty layer assignments per scenario index
+        # layer_s1 -> sl_key_list[0], layer_s2 -> sl_key_list[1], etc.
+        layer_assignments = {}  # {sl_key: [label, ...]}
+        for col in layer_cols:
+            val = str(row.get(col, "") or "").strip()
+            if not val:
+                continue
+            idx = int(col.replace("layer_s", "")) - 1
+            if idx < len(sl_key_list):
+                sl_key = sl_key_list[idx]
+                layer_assignments[sl_key] = [l.strip() for l in val.split(",")]
 
         has_description = bool(description)
-        has_layer = bool(layer_str)
+        has_layer = bool(layer_assignments)
 
         if has_description and has_layer:
             # --- Clone-and-reassign path ---
@@ -173,8 +203,8 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
             soil = soil_by_code[clone_code]
             _apply_soil_params(soil, row)
 
-            layer_labels = [l.strip() for l in layer_str.split(",")]
-            _reassign_layers(data, layer_labels, soil["Id"])
+            for sl_key, labels in layer_assignments.items():
+                _reassign_layers(data, labels, soil["Id"], sl_key=sl_key)
 
             # POP changes use the clone code
             layers_col = str(row.get("Layers", "") or "").strip()
@@ -193,9 +223,8 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
 
             _apply_soil_params(soil, row)
 
-            if has_layer:
-                layer_labels = [l.strip() for l in layer_str.split(",")]
-                _reassign_layers(data, layer_labels, soil["Id"])
+            for sl_key, labels in layer_assignments.items():
+                _reassign_layers(data, labels, soil["Id"], sl_key=sl_key)
 
             layers_col = str(row.get("Layers", "") or "").strip()
             pop_col = str(row.get("POP", "") or "").strip()
