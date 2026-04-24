@@ -98,29 +98,41 @@ def _reassign_layers(
     """
     Point soillayer entries matching the given geometry labels to new_soil_id.
     If sl_key is given, only that soillayers set is updated; otherwise all sets.
+
+    Each soillayers set is paired with its geometry by sorted index:
+      soillayers/soillayers   <-> geometries/geometry
+      soillayers/soillayers_1 <-> geometries/geometry_1
+    Label->UUID lookups are scoped to the paired geometry to avoid cross-scenario
+    collisions when different scenarios share the same layer label names.
     """
-    # Build label -> geometry layer UUID map
-    geo_label_to_id = {}
-    for k, v in data.items():
-        if k.startswith("geometries/"):
-            for layer in v.get("Layers", []):
-                lbl = layer.get("Label", "")
-                if lbl:
-                    geo_label_to_id[lbl] = layer["Id"]
-
-    target_ids = {geo_label_to_id[l] for l in layer_labels if l in geo_label_to_id}
-    missing = [l for l in layer_labels if l not in geo_label_to_id]
-    if missing:
-        print(f"  WARNING: layer labels not found in geometry: {missing}")
-
-    sl_keys_to_update = (
-        [sl_key]
-        if sl_key
-        else [
-            k for k in data if k.startswith("soillayers/") and "visual" not in k.lower()
-        ]
+    sl_key_list = sorted(
+        k for k in data if k.startswith("soillayers/") and "visual" not in k.lower()
     )
+    geo_key_list = sorted(k for k in data if k.startswith("geometries/"))
+
+    sl_keys_to_update = [sl_key] if sl_key else sl_key_list
+
     for k in sl_keys_to_update:
+        if k not in sl_key_list:
+            continue
+        idx = sl_key_list.index(k)
+        geo_key = geo_key_list[idx] if idx < len(geo_key_list) else None
+        if not geo_key:
+            print(f"  WARNING: no geometry found for {k}, skipping.")
+            continue
+
+        # Build label -> UUID only from the paired geometry
+        geo_label_to_id = {}
+        for layer in data[geo_key].get("Layers", []):
+            lbl = layer.get("Label", "")
+            if lbl:
+                geo_label_to_id[lbl] = layer["Id"]
+
+        target_ids = {geo_label_to_id[l] for l in layer_labels if l in geo_label_to_id}
+        missing = [l for l in layer_labels if l not in geo_label_to_id]
+        if missing:
+            print(f"  WARNING: labels not found in {geo_key}: {missing}")
+
         for sl in data[k].get("SoilLayers", []):
             if sl.get("LayerId") in target_ids:
                 sl["SoilId"] = new_soil_id
