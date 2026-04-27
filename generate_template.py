@@ -12,7 +12,6 @@ This creates an Excel file next to each STIX file:
 Sheets:
     runs        - One row per run: description, calc methods to run
     materials   - One row per (run, material): strength model + parameters
-    su_tables   - Registry of SuTable references
     results     - Filled in automatically by run_model.py
 """
 
@@ -86,10 +85,10 @@ def build_runs_sheet(calc_methods: list) -> pd.DataFrame:
         "run_id": "baseline",
         "description": "Original model, no modifications",
         "notes": "",
-        "constraints": "True",
+        "constraints": "TRUE",
     }
     for method in calc_methods:
-        row[f"run_{method}"] = True
+        row[f"run_{method}"] = "TRUE"
     return pd.DataFrame([row])
 
 
@@ -143,11 +142,6 @@ def build_materials_sheet(soils: list, pop_map: dict, layers_map: dict) -> pd.Da
     return df
 
 
-def build_su_tables_sheet() -> pd.DataFrame:
-    """Build the SuTable registry sheet (empty, user fills in)."""
-    return pd.DataFrame(columns=["su_table_key", "description", "file"])
-
-
 def build_results_sheet(calc_methods: list) -> pd.DataFrame:
     """Build the results sheet (empty, filled by run_model.py)."""
     cols = ["run_id", "model_name", "timestamp", "constraints"] + [
@@ -182,7 +176,6 @@ METHOD_LABELS = {
 SHEET_COLORS = {
     "runs": "1F4E79",
     "materials": "375623",
-    "su_tables": "7B3F00",
     "results": "4A235A",
 }
 
@@ -202,14 +195,12 @@ def generate_for_stix(stix_path: Path) -> None:
 
     df_runs = build_runs_sheet(calc_methods)
     df_materials = build_materials_sheet(soils, pop_map, layers_map)
-    df_su_tables = build_su_tables_sheet()
     df_results = build_results_sheet(calc_methods)
 
     output_path = stix_path.with_name(stix_path.stem + "_runs.xlsx")
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_runs.to_excel(writer, sheet_name="runs", index=False)
         df_materials.to_excel(writer, sheet_name="materials", index=False)
-        df_su_tables.to_excel(writer, sheet_name="su_tables", index=False)
         df_results.to_excel(writer, sheet_name="results", index=False)
 
     wb = load_workbook(output_path)
@@ -242,7 +233,6 @@ def main():
     print(f"\nDone. {len(stix_paths)} template(s) generated.")
     print("  runs      - Define your runs here (add rows for run_1, run_2, ...)")
     print("  materials - Define parameter changes per run (empty cell = use baseline)")
-    print("  su_tables - Register SuTable JSON files here")
     print("  results   - Filled automatically by run_model.py")
 
 

@@ -432,16 +432,16 @@ def run_model(stix_path: Path, project_root: Path) -> None:
         description = run_row.get("description", "")
         print(f"\n--- Run: {run_id} | {description} ---")
 
-        # Parse constraints column: True / False / Both (default: True)
+        # Parse constraints column: TRUE / FALSE / BOTH (default: TRUE)
         constraints_val = (
-            str(run_row.get("constraints", "True") or "True").strip().lower()
+            str(run_row.get("constraints", "TRUE") or "TRUE").strip().upper()
         )
-        if constraints_val == "both":
+        if constraints_val == "BOTH":
             variants = [("_cons", True), ("_nocons", False)]
-        elif constraints_val == "false":
+        elif constraints_val == "FALSE":
             variants = [("_nocons", False)]
         else:
-            variants = [("", True)]  # True or missing -> no suffix, keep constraints
+            variants = [("_cons", True)]  # TRUE or missing -> no suffix, keep constraints
 
         # Skip if ALL variant output files already exist
         all_done = all(
