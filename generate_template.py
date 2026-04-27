@@ -86,6 +86,7 @@ def build_runs_sheet(calc_methods: list) -> pd.DataFrame:
         "run_id": "baseline",
         "description": "Original model, no modifications",
         "notes": "",
+        "constraints": "True",
     }
     for method in calc_methods:
         row[f"run_{method}"] = True
@@ -149,7 +150,9 @@ def build_su_tables_sheet() -> pd.DataFrame:
 
 def build_results_sheet(calc_methods: list) -> pd.DataFrame:
     """Build the results sheet (empty, filled by run_model.py)."""
-    cols = ["run_id", "model_name", "timestamp"] + [f"FoS_{m}" for m in calc_methods]
+    cols = ["run_id", "model_name", "timestamp", "constraints"] + [
+        f"FoS_{m}" for m in calc_methods
+    ]
     return pd.DataFrame(columns=cols)
 
 

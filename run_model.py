@@ -305,6 +305,54 @@ def _apply_pop_changes(data: dict, soil_code: str, label_to_pop: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def strip_constraints(data: dict) -> dict:
+    """
+    Remove all search area / slip plane constraints from all calculationsettings.
+    Resets SearchAreaA/B to defaults, TangentArea to a wide band, and disables
+    all SlipPlaneConstraints zone flags.
+    """
+    import copy
+
+    data = copy.deepcopy(data)
+
+    for key in data:
+        if not key.startswith("calculationsettings/"):
+            continue
+        cs = data[key]
+
+        # UpliftVanParticleSwarm
+        uvps = cs.get("UpliftVanParticleSwarm", {})
+        if uvps:
+            for area in ("SearchAreaA", "SearchAreaB"):
+                if area in uvps:
+                    uvps[area]["TopLeft"] = {"X": 0.0, "Z": 0.0}
+                    uvps[area]["Width"] = 500.0
+                    uvps[area]["Height"] = 100.0
+            if "TangentArea" in uvps:
+                uvps["TangentArea"]["TopZ"] = 50.0
+                uvps["TangentArea"]["Height"] = 200.0
+            spc = uvps.get("SlipPlaneConstraints", {})
+            spc["IsZoneAConstraintsEnabled"] = False
+            spc["IsZoneBConstraintsEnabled"] = False
+            spc["IsSizeConstraintsEnabled"] = False
+
+        # BishopBruteForce
+        bbf = cs.get("BishopBruteForce", {})
+        spc = bbf.get("SlipPlaneConstraints", {})
+        if spc:
+            spc["IsZoneAConstraintsEnabled"] = False
+            spc["IsZoneBConstraintsEnabled"] = False
+            spc["IsSizeConstraintsEnabled"] = False
+
+        # SpencerGenetic
+        for method in ("Spencer", "SpencerGenetic"):
+            spc = cs.get(method, {}).get("SlipPlaneConstraints", {})
+            if spc:
+                spc["IsEnabled"] = False
+
+    return data
+
+
 def run_dstability(stix_path: Path, analysis_types: list) -> dict:
     """
     Run D-Stability for each requested analysis type and return FoS per type.
@@ -384,12 +432,26 @@ def run_model(stix_path: Path, project_root: Path) -> None:
         description = run_row.get("description", "")
         print(f"\n--- Run: {run_id} | {description} ---")
 
-        # Skip if output STIX already exists
-        output_stix = output_root / str(run_id) / f"{stix_path.stem}_{run_id}.stix"
-        if output_stix.exists():
-            print(
-                f"  Already computed, skipping. (Delete {output_stix.name} to rerun.)"
-            )
+        # Parse constraints column: True / False / Both (default: True)
+        constraints_val = (
+            str(run_row.get("constraints", "True") or "True").strip().lower()
+        )
+        if constraints_val == "both":
+            variants = [("_cons", True), ("_nocons", False)]
+        elif constraints_val == "false":
+            variants = [("_nocons", False)]
+        else:
+            variants = [("", True)]  # True or missing -> no suffix, keep constraints
+
+        # Skip if ALL variant output files already exist
+        all_done = all(
+            (
+                output_root / str(run_id) / f"{stix_path.stem}_{run_id}{suffix}.stix"
+            ).exists()
+            for suffix, _ in variants
+        )
+        if all_done:
+            print(f"  Already computed, skipping. (Delete output file(s) to rerun.)")
             continue
 
         # Which methods to run
@@ -408,36 +470,44 @@ def run_model(stix_path: Path, project_root: Path) -> None:
             print(f"  No methods enabled for this run, skipping.")
             continue
 
-        # Load baseline fresh for each run
+        # Load baseline and apply material changes once
         data = read_stix(stix_path)
-
-        # Apply material changes for this run
         run_materials = df_materials[df_materials["run_id"] == run_id]
         if not run_materials.empty:
             data = apply_material_changes(data, run_materials)
 
-        # Save modified STIX
-        output_stix.parent.mkdir(parents=True, exist_ok=True)
-        write_stix(output_stix, data)
-        print(f"  Saved: {output_stix.name}")
-
-        # Run D-Stability
-        fos_map = run_dstability(output_stix, analysis_types)
-
-        # Collect results
-        result_row = {
-            "run_id": run_id,
-            "model_name": stix_path.stem,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        for at, fos in fos_map.items():
-            label = next(
-                (l for l, a in METHOD_LABEL_TO_ANALYSIS_TYPE.items() if a == at), at
+        # Run each variant (with/without constraints)
+        for suffix, keep_constraints in variants:
+            variant_id = f"{run_id}{suffix}"
+            output_stix = (
+                output_root / str(run_id) / f"{stix_path.stem}_{variant_id}.stix"
             )
-            result_row[f"FoS_{label}"] = fos
-            print(f"  FoS ({label}) = {fos}")
 
-        all_results.append(result_row)
+            if output_stix.exists():
+                print(f"  Variant '{variant_id}' already computed, skipping.")
+                continue
+
+            variant_data = data if keep_constraints else strip_constraints(data)
+            output_stix.parent.mkdir(parents=True, exist_ok=True)
+            write_stix(output_stix, variant_data)
+            print(f"  Saved: {output_stix.name}")
+
+            fos_map = run_dstability(output_stix, analysis_types)
+
+            result_row = {
+                "run_id": variant_id,
+                "model_name": stix_path.stem,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "constraints": keep_constraints,
+            }
+            for at, fos in fos_map.items():
+                label = next(
+                    (l for l, a in METHOD_LABEL_TO_ANALYSIS_TYPE.items() if a == at), at
+                )
+                result_row[f"FoS_{label}"] = fos
+                print(f"  FoS ({label}) = {fos}")
+
+            all_results.append(result_row)
 
     # Write results back to Excel
     if all_results:
