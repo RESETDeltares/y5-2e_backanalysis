@@ -414,16 +414,12 @@ def run_model(stix_path: Path, project_root: Path) -> None:
     df_runs = pd.read_excel(excel_path, sheet_name="runs")
     df_materials = pd.read_excel(excel_path, sheet_name="materials")
 
-    # Determine calc method columns in runs sheet
-    method_cols = [c for c in df_runs.columns if c.startswith("run_")]
     output_root.mkdir(parents=True, exist_ok=True)
-
     all_results = []
 
     for _, run_row in df_runs.iterrows():
         run_id = run_row["run_id"]
-        description = run_row.get("description", "")
-        print(f"\n--- Run: {run_id} | {description} ---")
+        print(f"\n--- Run: {run_id} ---")
 
         # Parse constraints column: TRUE / FALSE / BOTH (default: TRUE)
         constraints_val = (
@@ -449,20 +445,22 @@ def run_model(stix_path: Path, project_root: Path) -> None:
             print(f"  Already computed, skipping. (Delete output file(s) to rerun.)")
             continue
 
-        # Which methods to run
-        analysis_types = []
-        for col in method_cols:
-            method_label = col.replace("run_", "")
-            if (
-                run_row.get(col) is True
-                or str(run_row.get(col)).strip().lower() == "true"
-            ):
-                at = METHOD_LABEL_TO_ANALYSIS_TYPE.get(method_label)
-                if at:
-                    analysis_types.append(at)
+        # Which methods to run — if_run TRUE means run all calc methods in STIX
+        if_run_val = str(run_row.get("if_run", "TRUE") or "TRUE").strip().upper()
+        if if_run_val != "TRUE":
+            print(f"  if_run not TRUE, skipping.")
+            continue
+
+        # Run all calc methods present in the STIX file
+        calc_map = get_calc_settings_map(read_stix(stix_path))
+        analysis_types = [
+            at
+            for label, at in METHOD_LABEL_TO_ANALYSIS_TYPE.items()
+            if any(k == at for k in calc_map)
+        ]
 
         if not analysis_types:
-            print(f"  No methods enabled for this run, skipping.")
+            print(f"  No matching calc methods found in STIX, skipping.")
             continue
 
         # Load baseline and apply material changes once

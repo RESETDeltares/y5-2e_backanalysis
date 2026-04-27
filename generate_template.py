@@ -83,12 +83,13 @@ def build_runs_sheet(calc_methods: list) -> pd.DataFrame:
     """Build the runs sheet with one baseline row."""
     row = {
         "run_id": "baseline",
-        "description": "Original model, no modifications",
+        "subsoil_strength": "",
+        "POP_states": "",
+        "embankment_strength": "",
         "notes": "",
         "constraints": "TRUE",
+        "if_run": "TRUE",
     }
-    for method in calc_methods:
-        row[f"run_{method}"] = "TRUE"
     return pd.DataFrame([row])
 
 
