@@ -162,7 +162,8 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
 
     for _, row in material_rows.iterrows():
         base_code = row["material_code"]
-        description = str(row.get("simple_description", "") or "").strip()
+        raw_desc = row.get("simple_description", "")
+        description = "" if pd.isna(raw_desc) else str(raw_desc).strip()
 
         # Gather non-empty layer assignments per scenario index
         # layer_s1 -> sl_key_list[0], layer_s2 -> sl_key_list[1], etc.
@@ -307,9 +308,8 @@ def _apply_pop_changes(data: dict, soil_code: str, label_to_pop: dict) -> None:
 
 def strip_constraints(data: dict) -> dict:
     """
-    Remove all search area / slip plane constraints from all calculationsettings.
-    Resets SearchAreaA/B to defaults, TangentArea to a wide band, and disables
-    all SlipPlaneConstraints zone flags.
+    Disable slip plane constraint zones (A, B, tangent) for all calc settings.
+    SearchAreaA/B coordinates are left untouched — only the zone flags are cleared.
     """
     import copy
 
@@ -323,18 +323,11 @@ def strip_constraints(data: dict) -> dict:
         # UpliftVanParticleSwarm
         uvps = cs.get("UpliftVanParticleSwarm", {})
         if uvps:
-            for area in ("SearchAreaA", "SearchAreaB"):
-                if area in uvps:
-                    uvps[area]["TopLeft"] = {"X": 0.0, "Z": 0.0}
-                    uvps[area]["Width"] = 500.0
-                    uvps[area]["Height"] = 100.0
-            if "TangentArea" in uvps:
-                uvps["TangentArea"]["TopZ"] = 50.0
-                uvps["TangentArea"]["Height"] = 200.0
             spc = uvps.get("SlipPlaneConstraints", {})
-            spc["IsZoneAConstraintsEnabled"] = False
-            spc["IsZoneBConstraintsEnabled"] = False
-            spc["IsSizeConstraintsEnabled"] = False
+            if spc:
+                spc["IsZoneAConstraintsEnabled"] = False
+                spc["IsZoneBConstraintsEnabled"] = False
+                spc["IsSizeConstraintsEnabled"] = False
 
         # BishopBruteForce
         bbf = cs.get("BishopBruteForce", {})
@@ -344,7 +337,7 @@ def strip_constraints(data: dict) -> dict:
             spc["IsZoneBConstraintsEnabled"] = False
             spc["IsSizeConstraintsEnabled"] = False
 
-        # SpencerGenetic
+        # Spencer / SpencerGenetic
         for method in ("Spencer", "SpencerGenetic"):
             spc = cs.get(method, {}).get("SlipPlaneConstraints", {})
             if spc:
@@ -441,7 +434,9 @@ def run_model(stix_path: Path, project_root: Path) -> None:
         elif constraints_val == "FALSE":
             variants = [("_nocons", False)]
         else:
-            variants = [("_cons", True)]  # TRUE or missing -> no suffix, keep constraints
+            variants = [
+                ("_cons", True)
+            ]  # TRUE or missing -> no suffix, keep constraints
 
         # Skip if ALL variant output files already exist
         all_done = all(
