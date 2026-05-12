@@ -153,6 +153,81 @@ def load_combined(name: str) -> pd.DataFrame:
     return merged
 
 
+def load_for_method(name: str, fos_col: str) -> pd.DataFrame:
+    """Like load_combined but uses the specified fos_col (may differ from CASES default)."""
+    path = PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx"
+    df_runs = pd.read_excel(path, sheet_name="runs")
+    df_results = pd.read_excel(path, sheet_name="results")
+
+    if fos_col not in df_results.columns:
+        # Method not available for this case — return shell with NaNs
+        merged = df_runs.copy()
+        merged["cons"] = float("nan")
+        merged["nocons"] = float("nan")
+        merged["has_baseline"] = False
+        merged["family"] = merged["run_id"].apply(
+            lambda r: (
+                "baseline" if r == "baseline" else r.replace("run_", "").split(".")[0]
+            )
+        )
+        merged["model"] = name
+        return merged
+
+    def base_id(rid):
+        for suffix in ("_cons", "_nocons"):
+            if str(rid).endswith(suffix):
+                return rid[: -len(suffix)]
+        return rid
+
+    df_results = df_results.copy()
+    df_results["base_id"] = df_results["run_id"].apply(base_id)
+    df_results["variant"] = df_results["constraints"].map(
+        {True: "cons", False: "nocons"}
+    )
+
+    pivot = df_results.pivot_table(
+        index="base_id", columns="variant", values=fos_col, aggfunc="first"
+    ).reset_index()
+    pivot.columns.name = None
+    pivot = pivot.rename(columns={"base_id": "run_id"})
+
+    merged = df_runs.merge(pivot, on="run_id", how="left")
+
+    bl_rows = merged.loc[merged["run_id"] == "baseline"]
+    has_baseline = (
+        len(bl_rows) > 0
+        and "cons" in bl_rows.columns
+        and pd.notna(bl_rows["cons"].values[0])
+    )
+
+    def family(rid):
+        if rid == "baseline":
+            return "baseline"
+        return rid.replace("run_", "").split(".")[0]
+
+    merged["family"] = merged["run_id"].apply(family)
+    merged["has_baseline"] = has_baseline
+    merged["model"] = name
+    return merged
+
+
+def _get_available_methods() -> dict:
+    """Return {method_suffix: [case_name, ...]} based on FoS_ columns in each results sheet."""
+    method_cases: dict = {}
+    for name in CASES:
+        p = PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx"
+        if not p.exists():
+            continue
+        df_header = pd.read_excel(p, sheet_name="results", nrows=0)
+        for col in df_header.columns:
+            if col.startswith("FoS_"):
+                method = col[len("FoS_") :]
+                method_cases.setdefault(method, [])
+                if name not in method_cases[method]:
+                    method_cases[method].append(name)
+    return method_cases
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -565,6 +640,171 @@ def plot_bergambacht_compare(
     print(f"  Saved: {out_path.name}")
 
 
+def plot_combined(out_path: Path) -> None:
+    """One subplot per (case, method) pair.
+    Circle (o) = constrained, X = unconstrained. Color = sub-run depth.
+    Baseline shown as a dashed horizontal line (cons value only).
+    Layout: 2 columns, N rows.
+    """
+    import numpy as np
+
+    # Build ordered panel list: (case_name, method) — skip bergambacht (v1), use v2
+    # Order: for each case in CASES order, for each method alphabetically
+    panels = []
+    for name in CASES:
+        if name == "bergambacht":
+            continue
+        p = PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx"
+        if not p.exists():
+            continue
+        df_header = pd.read_excel(p, sheet_name="results", nrows=0)
+        methods = sorted(
+            c[len("FoS_") :] for c in df_header.columns if c.startswith("FoS_")
+        )
+        for method in methods:
+            panels.append((name, method))
+
+    n = len(panels)
+    ncols = 2
+    nrows = (n + 1) // ncols
+
+    # Size: width driven by the widest panel's run count
+    run_counts = []
+    for name, method in panels:
+        df = load_for_method(name, f"FoS_{method}")
+        run_counts.append(len(df[df["run_id"] != "baseline"]))
+    max_runs = max(run_counts) if run_counts else 1
+    panel_w = max(7, max_runs * 0.5)
+    panel_h = 5
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(ncols * panel_w, nrows * panel_h),
+        gridspec_kw={"wspace": 0.45, "hspace": 0.45},
+    )
+    axes_flat = axes.flatten() if hasattr(axes, "flatten") else [axes]
+    fig.suptitle(
+        "Factor of Safety  (\u25cf constrained,  \u00d7 unconstrained)",
+        fontsize=13,
+        fontweight="bold",
+        y=1.01,
+    )
+
+    for ax_idx, (name, method) in enumerate(panels):
+        ax = axes_flat[ax_idx]
+        df = load_for_method(name, f"FoS_{method}")
+        case_df = df[df["run_id"] != "baseline"].set_index("run_id")
+
+        run_ids = sorted(case_df.index.tolist(), key=_run_sort_key)
+
+        for xi, rid in enumerate(run_ids):
+            color, _ = run_style(rid, name)
+            y_cons = (
+                case_df.loc[rid, "cons"] if "cons" in case_df.columns else float("nan")
+            )
+            y_nocons = (
+                case_df.loc[rid, "nocons"]
+                if "nocons" in case_df.columns
+                else float("nan")
+            )
+            if pd.notna(y_cons):
+                ax.scatter(
+                    xi,
+                    y_cons,
+                    color=color,
+                    marker="o",
+                    s=70,
+                    edgecolors="#333333",
+                    linewidths=0.5,
+                    zorder=4,
+                )
+            if pd.notna(y_nocons):
+                ax.scatter(
+                    xi,
+                    y_nocons,
+                    color=color,
+                    marker="x",
+                    s=70,
+                    linewidths=1.5,
+                    zorder=4,
+                )
+
+        # Baseline: cons dashed line
+        if bool(df["has_baseline"].values[0]) and "cons" in df.columns:
+            bl_rows = df.loc[df["run_id"] == "baseline", "cons"]
+            if len(bl_rows) > 0 and pd.notna(bl_rows.values[0]):
+                ax.axhline(
+                    float(bl_rows.values[0]),
+                    color=CASES[name]["colors"][-1],
+                    lw=1.3,
+                    ls="--",
+                    alpha=0.75,
+                    zorder=2,
+                )
+
+        ax.axhline(1.0, color="#c0392b", lw=0.9, ls=":", alpha=0.85, zorder=3)
+        ax.set_xticks(list(range(len(run_ids))))
+        ax.set_xticklabels(run_ids, rotation=45, ha="right", fontsize=8)
+        ax.tick_params(axis="x", pad=8)
+        ax.set_title(
+            f"{CASES[name]['label']} \u2014 {method}", fontsize=11, fontweight="bold"
+        )
+        ax.set_ylabel("FoS")
+        ax.grid(axis="y", alpha=0.3, lw=0.5)
+        ax.set_xlim(-0.5, len(run_ids) - 0.5)
+        ax.set_ylim(0.4, 1.4)
+        ax.set_yticks(np.arange(0.4, 1.41, 0.1))
+
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="#555",
+                markeredgecolor="#333",
+                markersize=8,
+                linestyle="None",
+                label="Constrained",
+            ),
+            plt.Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="#555",
+                markersize=8,
+                linestyle="None",
+                label="Unconstrained",
+            ),
+            plt.Line2D(
+                [0],
+                [0],
+                color=CASES[name]["colors"][-1],
+                lw=1.3,
+                ls="--",
+                label="Baseline (cons)",
+            ),
+            plt.Line2D([0], [0], color="#c0392b", lw=0.9, ls=":", label="FoS = 1.0"),
+        ]
+        ax.legend(
+            handles=handles,
+            fontsize=7,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1),
+            borderaxespad=0,
+            framealpha=0.85,
+        )
+
+    # Hide unused axes
+    for j in range(ax_idx + 1, len(axes_flat)):
+        axes_flat[j].set_visible(False)
+
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
 def plot_pct_change(dfs: dict, out_path: Path) -> None:
     """2 subplots (cons / nocons): % change from baseline (all cases).
     Cases without a true baseline use FoS=1.0 as the reference value.
@@ -597,12 +837,11 @@ def main():
     plots_dir.mkdir(exist_ok=True)
 
     print("Plotting...")
-    # Original 4-case plots (bergambacht_v2 excluded from these)
-    dfs_orig = {k: v for k, v in dfs.items() if k != "bergambacht_v2"}
-    plot_absolute(dfs_orig, "cons", plots_dir / "plot_fos_cons.png")
-    plot_absolute(dfs_orig, "nocons", plots_dir / "plot_fos_nocons.png")
-    plot_absolute_stack(dfs_orig, "cons", plots_dir / "plot_fos_cons_stack.png")
-    plot_absolute_stack(dfs_orig, "nocons", plots_dir / "plot_fos_nocons_stack.png")
+    # Combined cons+nocons plot (one subplot per FoS method)
+    plot_combined(plots_dir / "plot_fos_combined.png")
+
+    # % change from baseline (bergambacht v1 excluded, using v2 instead)
+    dfs_orig = {k: v for k, v in dfs.items() if k != "bergambacht"}
     plot_pct_change(dfs_orig, plots_dir / "plot_pct_change.png")
 
     # Bergambacht v1 vs v2 comparison
@@ -612,7 +851,7 @@ def main():
         plots_dir / "plot_bergambacht_compare.png",
     )
 
-    print("\nDone. 6 plots written to plots/.")
+    print("\nDone. 3 plots written to plots/.")
 
 
 if __name__ == "__main__":
