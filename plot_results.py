@@ -593,23 +593,26 @@ def main():
     print("Loading data...")
     dfs = {name: load_combined(name) for name in CASES}
 
+    plots_dir = PROJECT_ROOT / "plots"
+    plots_dir.mkdir(exist_ok=True)
+
     print("Plotting...")
     # Original 4-case plots (bergambacht_v2 excluded from these)
     dfs_orig = {k: v for k, v in dfs.items() if k != "bergambacht_v2"}
-    plot_absolute(dfs_orig, "cons", PROJECT_ROOT / "plot_fos_cons.png")
-    plot_absolute(dfs_orig, "nocons", PROJECT_ROOT / "plot_fos_nocons.png")
-    plot_absolute_stack(dfs_orig, "cons", PROJECT_ROOT / "plot_fos_cons_stack.png")
-    plot_absolute_stack(dfs_orig, "nocons", PROJECT_ROOT / "plot_fos_nocons_stack.png")
-    plot_pct_change(dfs_orig, PROJECT_ROOT / "plot_pct_change.png")
+    plot_absolute(dfs_orig, "cons", plots_dir / "plot_fos_cons.png")
+    plot_absolute(dfs_orig, "nocons", plots_dir / "plot_fos_nocons.png")
+    plot_absolute_stack(dfs_orig, "cons", plots_dir / "plot_fos_cons_stack.png")
+    plot_absolute_stack(dfs_orig, "nocons", plots_dir / "plot_fos_nocons_stack.png")
+    plot_pct_change(dfs_orig, plots_dir / "plot_pct_change.png")
 
     # Bergambacht v1 vs v2 comparison
     plot_bergambacht_compare(
         dfs["bergambacht"],
         dfs["bergambacht_v2"],
-        PROJECT_ROOT / "plot_bergambacht_compare.png",
+        plots_dir / "plot_bergambacht_compare.png",
     )
 
-    print("\nDone. 6 plots written to project root.")
+    print("\nDone. 6 plots written to plots/.")
 
 
 if __name__ == "__main__":
