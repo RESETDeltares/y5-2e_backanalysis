@@ -47,6 +47,55 @@ CASES = {
 # Run family → marker shape (auto-assigned from pool for any family number)
 _MARKER_POOL = ["^", "o", "s", "D", "P", "*", "v", "h", "<", ">", "8", "H"]
 
+# ---------------------------------------------------------------------------
+# Strip-plot constants  (new S.P.E run convention)
+# ---------------------------------------------------------------------------
+
+# Active cases for the new-style strip plot (bergambacht v1 excluded)
+_STRIP_CASES = ["bergambacht_v2", "eemdijk", "ijkdijk", "pernio"]
+_STRIP_LABELS = {
+    "bergambacht_v2": "Bergambacht",
+    "eemdijk": "Eemdijk",
+    "ijkdijk": "IJkdijk",
+    "pernio": "Pernio",
+}
+
+_SUBSOIL_ORDER = [0, 3, 4, 5]
+_SUBSOIL_LABELS = {0: "Original", 3: "LNA", 4: "RY4", 5: "RY5"}
+
+_EMB_COLORS = {
+    0: "#000000",  # Original
+    1: "#e6194b",  # Sand assoc.
+    2: "#f58231",  # Sand non-assoc.
+    3: "#3cb44b",  # LNA clay
+    4: "#4363d8",  # RY4 clay
+    5: "#911eb4",  # RY5 clay
+    6: "#42d4f4",  # Davis (CPT)
+    7: "#f032e6",  # Davis+int (CPT)
+    8: "#9a6324",  # Tan-phi (CPT)
+    9: "#008080",  # Tan-phi+int (CPT)
+}
+_EMB_LABELS = {
+    0: "Original",
+    1: "Sand assoc.",
+    2: "Sand non-assoc.",
+    3: "LNA clay",
+    4: "RY4 clay",
+    5: "RY5 clay",
+    6: "Davis (CPT)",
+    7: "Davis+int (CPT)",
+    8: "Tan-phi (CPT)",
+    9: "Tan-phi+int (CPT)",
+}
+
+# Single representative color per case for focused plots
+_CASE_COLORS = {
+    "bergambacht_v2": "#00acc1",  # teal
+    "eemdijk": "#e53935",  # red
+    "ijkdijk": "#43a047",  # green
+    "pernio": "#8e24aa",  # purple
+}
+
 
 def _run_sort_key(rid: str) -> tuple:
     """Sort key so run_1 < run_1.1 < run_1.4 < run_2 < run_2.1 etc."""
@@ -81,6 +130,53 @@ def run_style(run_id: str, case: str) -> tuple:
     color = case_colors[min(sub, len(case_colors) - 1)]
     marker = _family_marker(fam)
     return color, marker
+
+
+def _parse_spe(run_id: str):
+    """Parse 'S.P.E' run_id -> (subsoil, pop, emb) ints, or None if not that format."""
+    parts = run_id.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+
+
+def _load_strip_data(fos_col: str) -> pd.DataFrame:
+    """Load results for all _STRIP_CASES for one FoS column.
+    Returns flat DataFrame with columns:
+      case, run_id, subsoil, pop, emb, variant (cons/nocons), fos
+    """
+    rows = []
+    for name in _STRIP_CASES:
+        p = PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx"
+        if not p.exists():
+            continue
+        df_res = pd.read_excel(p, sheet_name="results")
+        if fos_col not in df_res.columns:
+            continue
+        for _, row in df_res.iterrows():
+            rid = str(row["run_id"])
+            for suffix, variant in (("_cons", "cons"), ("_nocons", "nocons")):
+                if rid.endswith(suffix):
+                    base = rid[: -len(suffix)]
+                    parsed = _parse_spe(base)
+                    if parsed and pd.notna(row[fos_col]):
+                        s, pop, e = parsed
+                        rows.append(
+                            {
+                                "case": name,
+                                "run_id": base,
+                                "subsoil": s,
+                                "pop": pop,
+                                "emb": e,
+                                "variant": variant,
+                                "fos": float(row[fos_col]),
+                            }
+                        )
+                    break
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +736,293 @@ def plot_bergambacht_compare(
     print(f"  Saved: {out_path.name}")
 
 
+def _strip_methods() -> list:
+    """Return sorted list of FoS method suffixes available across all strip cases."""
+    found: set = set()
+    for name in _STRIP_CASES:
+        p = PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx"
+        if not p.exists():
+            continue
+        df_h = pd.read_excel(p, sheet_name="results", nrows=0)
+        for col in df_h.columns:
+            if col.startswith("FoS_"):
+                found.add(col[4:])
+    return sorted(found)
+
+
+def plot_subsoil_trend(out_path, method, variant="cons"):
+    """Connected dot plot: subsoil progression on x-axis, FoS on y.
+
+    Filters to E=0 (original embankment only).
+    Hollow dots + dashed line  = original POP kept (P=0).
+    Filled dots + solid line   = POP matched to subsoil (P=S).
+    One pair of lines per case, coloured by case.
+    """
+    import numpy as np
+
+    fos_col = f"FoS_{method}"
+    df = _load_strip_data(fos_col)
+    if df.empty:
+        return
+
+    df = df[(df["emb"] == 0) & (df["variant"] == variant)].copy()
+    if df.empty:
+        return
+
+    x_pos = {s: i for i, s in enumerate(_SUBSOIL_ORDER)}  # {0:0, 3:1, 4:2, 5:3}
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    for case in _STRIP_CASES:
+        dc = df[df["case"] == case]
+        if dc.empty:
+            continue
+        color = _CASE_COLORS.get(case, "#333333")
+        label = _STRIP_LABELS[case]
+
+        # --- P=0 series: hollow markers, dashed line ---
+        pop0 = dc[dc["pop"] == 0].sort_values("subsoil")
+        if not pop0.empty:
+            xs = [x_pos[s] for s in pop0["subsoil"]]
+            ys = pop0["fos"].tolist()
+            ax.plot(xs, ys, color=color, lw=1.4, ls="--", alpha=0.7, zorder=3)
+            ax.scatter(
+                xs,
+                ys,
+                facecolors="none",
+                edgecolors=color,
+                linewidths=1.6,
+                marker="o",
+                s=60,
+                zorder=4,
+                alpha=0.9,
+                label=f"{label} — orig POP",
+            )
+
+        # --- P=S series: filled markers, solid line (only S in [3,4,5]) ---
+        popS = dc[(dc["pop"] == dc["subsoil"]) & (dc["subsoil"] != 0)].sort_values(
+            "subsoil"
+        )
+        if not popS.empty:
+            xs = [x_pos[s] for s in popS["subsoil"]]
+            ys = popS["fos"].tolist()
+            ax.plot(xs, ys, color=color, lw=1.4, ls="-", alpha=0.7, zorder=3)
+            ax.scatter(
+                xs,
+                ys,
+                facecolors=color,
+                edgecolors=color,
+                linewidths=0.4,
+                marker="o",
+                s=60,
+                zorder=4,
+                alpha=0.9,
+                label=f"{label} — matched POP",
+            )
+
+    ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=2)
+    ax.set_xticks(range(len(_SUBSOIL_ORDER)))
+    ax.set_xticklabels([_SUBSOIL_LABELS[s] for s in _SUBSOIL_ORDER])
+    ax.set_xlabel("Subsoil model")
+    ax.set_ylabel("FoS")
+    title_v = "Constrained" if variant == "cons" else "Unconstrained"
+    ax.set_title(
+        f"Subsoil effect on FoS — {method.capitalize()} ({title_v}, original embankment)"
+    )
+    ax.grid(axis="y", alpha=0.25, lw=0.5)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def plot_subsoil_strip(
+    out_path: Path, method: str, variants: tuple = ("cons", "nocons")
+) -> None:
+    """One figure for one FoS method.
+    X axis  : subsoil groups (Original / LNA / RY4 / RY5),
+              each group has 4 location clusters.
+    Y axis  : FoS
+    Color   : embankment type
+    Shape   : filled circle = constrained, x = unconstrained
+    """
+    import numpy as np
+
+    df = _load_strip_data(f"FoS_{method}")
+    if df.empty:
+        return
+
+    n_locs = len(_STRIP_CASES)
+    n_sub = len(_SUBSOIL_ORDER)
+    group_w = n_locs + 1  # 4 location slots + 1 gap
+
+    def xc(sub_idx, loc_idx, emb):
+        jitter = (emb % 5 - 2) * 0.09
+        return sub_idx * group_w + loc_idx + jitter
+
+    title_suffix = (
+        "(\u25cf constrained, \u00d7 unconstrained)"
+        if len(variants) > 1
+        else "(constrained only)"
+    )
+    fig, ax = plt.subplots(figsize=(14, 6))
+    fig.suptitle(
+        f"FoS by subsoil parameter \u2014 {method}  {title_suffix}",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    for _, row in df.iterrows():
+        if row["variant"] not in variants:
+            continue
+        s = row["subsoil"]
+        if s not in _SUBSOIL_ORDER:
+            continue
+        si = _SUBSOIL_ORDER.index(s)
+        case = row["case"]
+        if case not in _STRIP_CASES:
+            continue
+        li = _STRIP_CASES.index(case)
+        e = row["emb"]
+        x = xc(si, li, e)
+        color = _EMB_COLORS.get(e, "#000000")
+
+        if row["variant"] == "cons":
+            pop_matched = (
+                row["pop"] != 0
+            )  # True = POP same as subsoil, False = original
+            ax.scatter(
+                x,
+                row["fos"],
+                color=color,
+                marker="o",
+                s=22,
+                facecolors=color if pop_matched else "none",
+                edgecolors=color,
+                linewidths=0.4 if pop_matched else 1.6,
+                zorder=4,
+                alpha=0.55,
+            )
+        else:
+            ax.scatter(
+                x,
+                row["fos"],
+                color=color,
+                marker="x",
+                s=22,
+                linewidths=1.0,
+                zorder=4,
+                alpha=0.55,
+            )
+
+    ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
+
+    xtick_pos, xtick_labels = [], []
+    for si, s in enumerate(_SUBSOIL_ORDER):
+        if si > 0:
+            ax.axvline(si * group_w - 0.5, color="#cccccc", lw=1.0, zorder=1)
+        for li, case in enumerate(_STRIP_CASES):
+            xtick_pos.append(si * group_w + li)
+            xtick_labels.append(_STRIP_LABELS[case])
+
+    ax.set_xticks(xtick_pos)
+    ax.set_xticklabels(xtick_labels, rotation=40, ha="right", fontsize=8)
+
+    for si, s in enumerate(_SUBSOIL_ORDER):
+        mid_x = si * group_w + (n_locs - 1) / 2
+        ax.text(
+            mid_x,
+            1.52,
+            _SUBSOIL_LABELS[s],
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+            color="#222222",
+            bbox=dict(boxstyle="round,pad=0.2", fc="#f0f0f0", ec="#cccccc", lw=0.8),
+        )
+
+    ax.set_xlim(-0.8, n_sub * group_w - 1.3)
+    ax.set_ylim(0.0, 1.6)
+    ax.set_yticks(np.arange(0.0, 1.51, 0.1))
+    ax.set_ylabel("FoS")
+    ax.grid(axis="y", alpha=0.25, lw=0.5)
+
+    present_embs = sorted(df["emb"].unique())
+    handles = []
+    for e in present_embs:
+        handles.append(
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=_EMB_COLORS[e],
+                markeredgecolor="#333333",
+                markersize=7,
+                linestyle="None",
+                label=_EMB_LABELS[e],
+            )
+        )
+    if "cons" in variants:
+        handles.append(
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="#888",
+                markeredgecolor="#888",
+                markersize=7,
+                linestyle="None",
+                label="Cons, POP replaced",
+            )
+        )
+        handles.append(
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="none",
+                markeredgecolor="#888",
+                markersize=7,
+                linestyle="None",
+                label="Cons, POP original",
+            )
+        )
+    if "nocons" in variants:
+        handles.append(
+            plt.Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="#555",
+                markersize=7,
+                linestyle="None",
+                label="Unconstrained",
+            )
+        )
+    handles.append(
+        plt.Line2D([0], [0], color="#c0392b", lw=1.0, ls=":", label="FoS = 1.0")
+    )
+    ax.legend(
+        handles=handles,
+        fontsize=7,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1),
+        borderaxespad=0,
+        framealpha=0.85,
+        title="Embankment",
+        title_fontsize=8,
+    )
+
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
 def plot_combined(out_path: Path) -> None:
     """One subplot per (case, method) pair.
     Circle (o) = constrained, X = unconstrained. Color = sub-run depth.
@@ -831,12 +1214,25 @@ def plot_pct_change(dfs: dict, out_path: Path) -> None:
 
 def main():
     print("Loading data...")
-    dfs = {name: load_combined(name) for name in CASES}
+    # Only load cases whose Excel files actually exist
+    dfs = {
+        name: load_combined(name)
+        for name in CASES
+        if (PROJECT_ROOT / "baseline_models" / f"{name}_runs.xlsx").exists()
+    }
 
     plots_dir = PROJECT_ROOT / "plots"
     plots_dir.mkdir(exist_ok=True)
 
-    print("Plotting...")
+    print("Plotting...")  # New strip plot (grouped by subsoil, all locations)
+    # Strip plots: one file per method x variant combination
+    for method in _strip_methods():
+        plot_subsoil_strip(plots_dir / f"plot_strip_{method}.png", method)
+        plot_subsoil_strip(
+            plots_dir / f"plot_strip_{method}_cons.png", method, variants=("cons",)
+        )
+        # Focused subsoil trend plot (E=0, both POP variants)
+        plot_subsoil_trend(plots_dir / f"plot_subsoil_trend_{method}.png", method)
     # Combined cons+nocons plot (one subplot per FoS method)
     plot_combined(plots_dir / "plot_fos_combined.png")
 
@@ -844,12 +1240,13 @@ def main():
     dfs_orig = {k: v for k, v in dfs.items() if k != "bergambacht"}
     plot_pct_change(dfs_orig, plots_dir / "plot_pct_change.png")
 
-    # Bergambacht v1 vs v2 comparison
-    plot_bergambacht_compare(
-        dfs["bergambacht"],
-        dfs["bergambacht_v2"],
-        plots_dir / "plot_bergambacht_compare.png",
-    )
+    # Bergambacht v1 vs v2 comparison (only if v1 file is still present)
+    if "bergambacht" in dfs and "bergambacht_v2" in dfs:
+        plot_bergambacht_compare(
+            dfs["bergambacht"],
+            dfs["bergambacht_v2"],
+            plots_dir / "plot_bergambacht_compare.png",
+        )
 
     print("\nDone. 3 plots written to plots/.")
 
