@@ -769,12 +769,14 @@ def _strip_methods() -> list:
 
 
 def plot_case_strip(
-    out_path: Path, method: str, variants: tuple = ("cons", "nocons")
+    out_path: Path, method: str, variants: tuple = ("cons", "nocons"),
+    active_embs: list = None,
 ) -> None:
     """Like plot_subsoil_strip but with axes swapped:
     Outer groups = cases (Bergambacht, Eemdijk, IJkdijk, Pernio).
     Inner X positions = subsoil models (Original, LNA, RY4, RY5).
     Color = embankment type.  Fill = POP state.
+    active_embs: if provided, only those emb codes are shown at full alpha; others dimmed.
     """
     import numpy as np
 
@@ -816,6 +818,7 @@ def plot_case_strip(
         e = row["emb"]
         x = xc(ci, si, e)
         color = _EMB_COLORS.get(e, "#000000")
+        a = 0.55 if (active_embs is None or e in active_embs) else 0.05
 
         if row["variant"] == "cons":
             pop_matched = row["pop"] != 0
@@ -828,7 +831,7 @@ def plot_case_strip(
                 edgecolors=color,
                 linewidths=0.4 if pop_matched else 1.6,
                 zorder=4,
-                alpha=0.55,
+                alpha=a,
             )
         else:
             ax.scatter(
@@ -839,7 +842,7 @@ def plot_case_strip(
                 s=22,
                 linewidths=1.0,
                 zorder=4,
-                alpha=0.55,
+                alpha=a,
             )
 
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
@@ -1036,7 +1039,11 @@ def plot_subsoil_trend(out_path, method, variant="cons"):
 
 
 def plot_subsoil_strip(
-    out_path: Path, method: str, variants: tuple = ("cons", "nocons")
+    out_path: Path,
+    method: str,
+    variants: tuple = ("cons", "nocons"),
+    active_cases: list = None,
+    active_subsoils: list = None,
 ) -> None:
     """One figure for one FoS method.
     X axis  : subsoil groups (Original / LNA / RY4 / RY5),
@@ -1085,6 +1092,14 @@ def plot_subsoil_strip(
         e = row["emb"]
         x = xc(si, li, e)
         color = _EMB_COLORS.get(e, "#000000")
+        a = (
+            0.55
+            if (
+                (active_cases is None or case in active_cases)
+                and (active_subsoils is None or s in active_subsoils)
+            )
+            else 0.05
+        )
 
         if row["variant"] == "cons":
             pop_matched = (
@@ -1100,7 +1115,7 @@ def plot_subsoil_strip(
                 edgecolors=color,
                 linewidths=0.4 if pop_matched else 1.6,
                 zorder=4,
-                alpha=0.55,
+                alpha=a,
             )
         else:
             ax.scatter(
@@ -1111,7 +1126,7 @@ def plot_subsoil_strip(
                 s=22,
                 linewidths=1.0,
                 zorder=4,
-                alpha=0.55,
+                alpha=a,
             )
 
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
@@ -1794,6 +1809,122 @@ def plot_emb_family_bands(out_path: Path, method: str) -> None:
     print(f"  Saved: {out_path.name}")
 
 
+def plot_cpt_gain(out_path: Path, method: str) -> None:
+    """ΔFoS relative to Original embankment for Eemdijk and IJkdijk.
+    Two subplots side by side. X = subsoil. One line per CPT family
+    (median of E variants) with a shaded min–max band. Constrained, POP=0 only.
+    """
+    import numpy as np
+
+    _CPT_GROUPS = {
+        "CPT Davis": ([6, 7], _FAMILY_COLORS["CPT Davis"]),
+        "CPT Tan-phi": ([8, 9], _FAMILY_COLORS["CPT Tan-phi"]),
+    }
+    _TARGET_CASES = ["eemdijk", "ijkdijk"]
+
+    df = _load_strip_data(f"FoS_{method}")
+    df = df[(df["variant"] == "cons") & (df["pop"] == 0)].copy()
+    if df.empty:
+        return
+
+    cases = [c for c in _TARGET_CASES if c in df["case"].unique()]
+    if not cases:
+        return
+
+    fig, axes = plt.subplots(
+        1, len(cases), figsize=(4.5 * len(cases), 4.2), squeeze=False, sharey=True
+    )
+    fig.suptitle(
+        f"CPT embankment gain — {method} (constrained, original POP)\n"
+        f"ΔFoS = FoS(CPT) − FoS(Original embankment)",
+        fontsize=11,
+        fontweight="bold",
+    )
+
+    xvals = list(range(len(_SUBSOIL_ORDER)))
+    xlabels = [_SUBSOIL_LABELS[s] for s in _SUBSOIL_ORDER]
+
+    print(f"\n  CPT gain summary — {method}")
+    print(
+        f"  {'Case':<14} {'Subsoil':<10} {'Family':<14} {'min':>7} {'median':>7} {'max':>7}"
+    )
+
+    for col, case in enumerate(cases):
+        ax = axes[0][col]
+        dc = df[df["case"] == case]
+
+        for fam_name, (embs, color) in _CPT_GROUPS.items():
+            xs, medians, mins, maxs = [], [], [], []
+            for i, s in enumerate(_SUBSOIL_ORDER):
+                base = dc[(dc["subsoil"] == s) & (dc["emb"] == 0)]["fos"]
+                if base.empty:
+                    continue
+                fos_base = base.iloc[0]
+                deltas = []
+                for e in embs:
+                    row = dc[(dc["subsoil"] == s) & (dc["emb"] == e)]["fos"]
+                    if not row.empty:
+                        deltas.append(row.iloc[0] - fos_base)
+                if not deltas:
+                    continue
+                xs.append(i)
+                medians.append(float(np.median(deltas)))
+                mins.append(min(deltas))
+                maxs.append(max(deltas))
+                print(
+                    f"  {_STRIP_LABELS[case]:<14} {_SUBSOIL_LABELS[s]:<10} "
+                    f"{fam_name:<14} {min(deltas):+.3f}  {float(np.median(deltas)):+.3f}  {max(deltas):+.3f}"
+                )
+
+            if not xs:
+                continue
+            ax.fill_between(xs, mins, maxs, color=color, alpha=0.2, zorder=2)
+            ax.plot(
+                xs,
+                medians,
+                color=color,
+                lw=2.0,
+                marker="o",
+                markersize=6,
+                zorder=3,
+                label=fam_name,
+            )
+
+        ax.axhline(0.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=4)
+        ax.set_xticks(xvals)
+        ax.set_xticklabels(xlabels)
+        ax.set_title(_STRIP_LABELS[case], fontsize=11)
+        ax.grid(axis="y", alpha=0.3, lw=0.5)
+        if col == 0:
+            ax.set_ylabel("ΔFoS  (CPT − Original emb)")
+
+    # Symmetric y-axis around 0
+    ymax = max(abs(lim) for ax in axes[0] for lim in ax.get_ylim())
+    ymax = max(ymax, 0.1)
+    for ax in axes[0]:
+        ax.set_ylim(-ymax * 0.15, ymax * 1.15)
+
+    handles = [
+        plt.Line2D([0], [0], color=c, lw=2, label=f)
+        for f, (_, c) in _CPT_GROUPS.items()
+    ]
+    handles.append(
+        plt.Line2D([0], [0], color="#c0392b", lw=1.0, ls=":", label="ΔFoS = 0")
+    )
+    fig.legend(
+        handles=handles,
+        fontsize=9,
+        loc="lower center",
+        ncol=3,
+        bbox_to_anchor=(0.5, -0.04),
+        framealpha=0.85,
+    )
+    fig.tight_layout(rect=[0, 0.1, 1, 1])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"\n  Saved: {out_path.name}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1818,11 +1949,25 @@ def main():
         plot_subsoil_strip(
             plots_dir / f"plot_strip_{method}_cons.png", method, variants=("cons",)
         )
+        # Case-filtered variants (dimmed inactive cases)
+        if method == "upliftvan":
+            plot_subsoil_strip(
+                plots_dir / "plot_strip_upliftvan_cons_eem_ijk.png",
+                method,
+                variants=("cons",),
+                active_cases=["eemdijk", "ijkdijk"],
+                active_subsoils=[0, 4, 5],  # Original, RY4, RY5 — LNA dimmed
+            )
         # Same plots with cases as outer groups, subsoil as inner x-positions
         plot_case_strip(plots_dir / f"plot_casestrip_{method}.png", method)
         plot_case_strip(
             plots_dir / f"plot_casestrip_{method}_cons.png", method, variants=("cons",)
         )
+        if method == "upliftvan":
+            plot_case_strip(
+                plots_dir / "plot_casestrip_upliftvan_cons_orig_emb.png",
+                method, variants=("cons",), active_embs=[0],
+            )
         # Focused subsoil trend plot (E=0, both POP variants)
         plot_subsoil_trend(plots_dir / f"plot_subsoil_trend_{method}.png", method)
         # Deviation from FoS=1.0 strip
@@ -1831,6 +1976,8 @@ def main():
         plot_emb_sensitivity(plots_dir / f"plot_emb_sensitivity_{method}.png", method)
         # Embankment family bands (CPT vs lab comparison)
         plot_emb_family_bands(plots_dir / f"plot_emb_families_{method}.png", method)
+        # CPT gain over Original embankment
+        plot_cpt_gain(plots_dir / f"plot_cpt_gain_{method}.png", method)
     # Combined cons+nocons plot (one subplot per FoS method)
     plot_combined(plots_dir / "plot_fos_combined.png")
 
