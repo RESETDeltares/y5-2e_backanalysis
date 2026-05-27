@@ -60,8 +60,15 @@ _STRIP_LABELS = {
     "pernio": "Pernio",
 }
 
-_SUBSOIL_ORDER = [0, 3, 4, 5]
-_SUBSOIL_LABELS = {0: "Original", 3: "LNA", 4: "RY4", 5: "RY5"}
+_SUBSOIL_ORDER = [0, 3, 4, 5, 10, 11]
+_SUBSOIL_LABELS = {
+    0: "Original",
+    3: "LNA",
+    4: "RY4",
+    5: "RY5",
+    10: "RY5.avg",
+    11: "RY5.caut",
+}
 
 _EMB_COLORS = {
     0: "#000000",  # Original
@@ -74,6 +81,8 @@ _EMB_COLORS = {
     7: "#f032e6",  # Davis+int (CPT)
     8: "#9a6324",  # Tan-phi (CPT)
     9: "#008080",  # Tan-phi+int (CPT)
+    10: "#ffd54f",  # RY5.avg  (light gold)
+    11: "#b8860b",  # RY5.caut (dark gold)
 }
 _EMB_LABELS = {
     0: "Original",
@@ -86,6 +95,8 @@ _EMB_LABELS = {
     7: "Davis+int (CPT)",
     8: "Tan-phi (CPT)",
     9: "Tan-phi+int (CPT)",
+    10: "RY5.avg",
+    11: "RY5.caut",
 }
 
 # Single representative color per case for focused plots
@@ -103,6 +114,7 @@ _EMB_FAMILIES = {
     "Clay (lab)": [3, 4, 5],
     "CPT Davis": [6, 7],
     "CPT Tan-phi": [8, 9],
+    "RY5 gen.": [10, 11],
 }
 _FAMILY_COLORS = {
     "Original": "#555555",
@@ -110,6 +122,7 @@ _FAMILY_COLORS = {
     "Clay (lab)": "#3cb44b",
     "CPT Davis": "#4363d8",
     "CPT Tan-phi": "#911eb4",
+    "RY5 gen.": "#ffd54f",  # light gold (representative for family band)
 }
 # Reverse lookup: emb code → family name
 _EMB_TO_FAMILY = {e: fam for fam, embs in _EMB_FAMILIES.items() for e in embs}
@@ -148,6 +161,22 @@ def run_style(run_id: str, case: str) -> tuple:
     color = case_colors[min(sub, len(case_colors) - 1)]
     marker = _family_marker(fam)
     return color, marker
+
+
+def _draw_sigma_bands(ax, center: float = 1.0) -> None:
+    """Overlay ±1σ (0.05) and ±2σ (0.10) tolerance bands around *center*.
+    Bands use a very light green fill; boundaries are faint dotted green lines.
+    Call this before plotting data so bands sit behind the markers.
+    """
+    _GREEN = "#43a047"
+    # Outer band ±0.10  (2σ)
+    ax.axhspan(center - 0.10, center + 0.10, color=_GREEN, alpha=0.07, zorder=0, lw=0)
+    # Inner band ±0.05  (1σ) — slightly stronger fill
+    ax.axhspan(center - 0.05, center + 0.05, color=_GREEN, alpha=0.10, zorder=0, lw=0)
+    # Boundary lines
+    for delta in (0.05, 0.10):
+        ax.axhline(center + delta, color=_GREEN, lw=0.8, ls=":", alpha=0.55, zorder=1)
+        ax.axhline(center - delta, color=_GREEN, lw=0.8, ls=":", alpha=0.55, zorder=1)
 
 
 def _parse_spe(run_id: str):
@@ -769,14 +798,18 @@ def _strip_methods() -> list:
 
 
 def plot_case_strip(
-    out_path: Path, method: str, variants: tuple = ("cons", "nocons"),
+    out_path: Path,
+    method: str,
+    variants: tuple = ("cons", "nocons"),
     active_embs: list = None,
+    active_cases: list = None,
+    active_subsoils: list = None,
 ) -> None:
     """Like plot_subsoil_strip but with axes swapped:
     Outer groups = cases (Bergambacht, Eemdijk, IJkdijk, Pernio).
-    Inner X positions = subsoil models (Original, LNA, RY4, RY5).
+    Inner X positions = subsoil models (Original, LNA, RY4, RY5, ...).
     Color = embankment type.  Fill = POP state.
-    active_embs: if provided, only those emb codes are shown at full alpha; others dimmed.
+    active_embs / active_cases / active_subsoils: full alpha when active, 0.05 otherwise.
     """
     import numpy as np
 
@@ -818,7 +851,15 @@ def plot_case_strip(
         e = row["emb"]
         x = xc(ci, si, e)
         color = _EMB_COLORS.get(e, "#000000")
-        a = 0.55 if (active_embs is None or e in active_embs) else 0.05
+        a = (
+            0.55
+            if (
+                (active_embs is None or e in active_embs)
+                and (active_cases is None or case in active_cases)
+                and (active_subsoils is None or s in active_subsoils)
+            )
+            else 0.05
+        )
 
         if row["variant"] == "cons":
             pop_matched = row["pop"] != 0
@@ -845,6 +886,7 @@ def plot_case_strip(
                 alpha=a,
             )
 
+    _draw_sigma_bands(ax)
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
 
     xtick_pos, xtick_labels = [], []
@@ -1021,6 +1063,7 @@ def plot_subsoil_trend(out_path, method, variant="cons"):
                 label=f"{label} — matched POP",
             )
 
+    _draw_sigma_bands(ax)
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=2)
     ax.set_xticks(range(len(_SUBSOIL_ORDER)))
     ax.set_xticklabels([_SUBSOIL_LABELS[s] for s in _SUBSOIL_ORDER])
@@ -1044,6 +1087,7 @@ def plot_subsoil_strip(
     variants: tuple = ("cons", "nocons"),
     active_cases: list = None,
     active_subsoils: list = None,
+    active_embs: list = None,
 ) -> None:
     """One figure for one FoS method.
     X axis  : subsoil groups (Original / LNA / RY4 / RY5),
@@ -1097,6 +1141,7 @@ def plot_subsoil_strip(
             if (
                 (active_cases is None or case in active_cases)
                 and (active_subsoils is None or s in active_subsoils)
+                and (active_embs is None or e in active_embs)
             )
             else 0.05
         )
@@ -1129,6 +1174,7 @@ def plot_subsoil_strip(
                 alpha=a,
             )
 
+    _draw_sigma_bands(ax)
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
 
     xtick_pos, xtick_labels = [], []
@@ -1339,6 +1385,7 @@ def plot_combined(out_path: Path) -> None:
                     zorder=2,
                 )
 
+        _draw_sigma_bands(ax)
         ax.axhline(1.0, color="#c0392b", lw=0.9, ls=":", alpha=0.85, zorder=3)
         ax.set_xticks(list(range(len(run_ids))))
         ax.set_xticklabels(run_ids, rotation=45, ha="right", fontsize=8)
@@ -1499,6 +1546,7 @@ def plot_deviation_strip(out_path: Path, method: str) -> None:
             alpha=0.55,
         )
 
+    _draw_sigma_bands(ax, center=0.0)
     ax.axhline(0.0, color="#c0392b", lw=1.2, ls=":", alpha=0.9, zorder=3)
     ax.axhspan(-0.65, 0.0, alpha=0.04, color="#2196f3", zorder=0)
 
@@ -1650,6 +1698,7 @@ def plot_emb_sensitivity(out_path: Path, method: str) -> None:
                     alpha=0.75,
                 )
 
+        _draw_sigma_bands(ax)
         ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
         ax.set_xticks(range(len(_SUBSOIL_ORDER)))
         ax.set_xticklabels([_SUBSOIL_LABELS[s] for s in _SUBSOIL_ORDER])
@@ -1775,6 +1824,7 @@ def plot_emb_family_bands(out_path: Path, method: str) -> None:
                 alpha=0.9,
             )
 
+        _draw_sigma_bands(ax)
         ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=4)
         ax.set_xticks(xvals)
         ax.set_xticklabels([_SUBSOIL_LABELS[s] for s in _SUBSOIL_ORDER])
@@ -1890,6 +1940,7 @@ def plot_cpt_gain(out_path: Path, method: str) -> None:
                 label=fam_name,
             )
 
+        _draw_sigma_bands(ax, center=0.0)
         ax.axhline(0.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=4)
         ax.set_xticks(xvals)
         ax.set_xticklabels(xlabels)
@@ -1943,30 +1994,67 @@ def main():
     plots_dir.mkdir(exist_ok=True)
 
     print("Plotting...")  # New strip plot (grouped by subsoil, all locations)
-    # Strip plots: one file per method x variant combination
+    _SAND_EMBS = [0, 6, 7, 8, 9]
+    _EEM_IJK_CASES = ["eemdijk", "ijkdijk"]
+    _EEM_IJK_SOILS = [
+        0,
+        4,
+        5,
+        10,
+        11,
+    ]  # Original, RY4, RY5, RY5.avg, RY5.caut — LNA dimmed
+
     for method in _strip_methods():
+        # --- plot_strip (subsoil groups, case clusters) ---
         plot_subsoil_strip(plots_dir / f"plot_strip_{method}.png", method)
         plot_subsoil_strip(
             plots_dir / f"plot_strip_{method}_cons.png", method, variants=("cons",)
         )
-        # Case-filtered variants (dimmed inactive cases)
+        plot_subsoil_strip(
+            plots_dir / f"plot_strip_{method}_cons_orig_emb.png",
+            method,
+            variants=("cons",),
+            active_embs=[0],
+        )
+        plot_subsoil_strip(
+            plots_dir / f"plot_strip_{method}_cons_sand_strength.png",
+            method,
+            variants=("cons",),
+            active_embs=_SAND_EMBS,
+        )
         if method == "upliftvan":
             plot_subsoil_strip(
                 plots_dir / "plot_strip_upliftvan_cons_eem_ijk.png",
                 method,
                 variants=("cons",),
-                active_cases=["eemdijk", "ijkdijk"],
-                active_subsoils=[0, 4, 5],  # Original, RY4, RY5 — LNA dimmed
+                active_cases=_EEM_IJK_CASES,
+                active_subsoils=_EEM_IJK_SOILS,
             )
-        # Same plots with cases as outer groups, subsoil as inner x-positions
+
+        # --- plot_casestrip (case groups, subsoil clusters) ---
         plot_case_strip(plots_dir / f"plot_casestrip_{method}.png", method)
         plot_case_strip(
             plots_dir / f"plot_casestrip_{method}_cons.png", method, variants=("cons",)
         )
+        plot_case_strip(
+            plots_dir / f"plot_casestrip_{method}_cons_orig_emb.png",
+            method,
+            variants=("cons",),
+            active_embs=[0],
+        )
+        plot_case_strip(
+            plots_dir / f"plot_casestrip_{method}_cons_sand_strength.png",
+            method,
+            variants=("cons",),
+            active_embs=_SAND_EMBS,
+        )
         if method == "upliftvan":
             plot_case_strip(
-                plots_dir / "plot_casestrip_upliftvan_cons_orig_emb.png",
-                method, variants=("cons",), active_embs=[0],
+                plots_dir / "plot_casestrip_upliftvan_cons_eem_ijk.png",
+                method,
+                variants=("cons",),
+                active_cases=_EEM_IJK_CASES,
+                active_subsoils=_EEM_IJK_SOILS,
             )
         # Focused subsoil trend plot (E=0, both POP variants)
         plot_subsoil_trend(plots_dir / f"plot_subsoil_trend_{method}.png", method)
