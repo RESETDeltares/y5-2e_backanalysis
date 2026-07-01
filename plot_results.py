@@ -60,14 +60,21 @@ _STRIP_LABELS = {
     "pernio": "Pernio",
 }
 
-_SUBSOIL_ORDER = [0, 3, 4, 5, 10, 11]
+_SUBSOIL_ORDER = [0, 3, 4, 5, 10, 13, 11, 14]
+# Pernio-specific order: adds models 15 (avg mobilization) and 16 (cautious mobilization)
+# right next to the Original subsoil
+_PERNIO_SUBSOIL_ORDER = [0, 15, 16, 3, 4, 5, 10, 13, 11, 14]
 _SUBSOIL_LABELS = {
     0: "Original",
     3: "LNA",
     4: "RY4",
     5: "RY5",
     10: "RY5.avg",
+    13: "RY5.avg+(c.int)",
     11: "RY5.caut",
+    14: "RY5.caut+(c.int)",
+    15: "Orig.avg.mob.",
+    16: "Orig.caut.mob.",
 }
 
 _EMB_COLORS = {
@@ -78,11 +85,13 @@ _EMB_COLORS = {
     4: "#4363d8",  # RY4 clay
     5: "#911eb4",  # RY5 clay
     6: "#42d4f4",  # Davis (CPT)
-    7: "#f032e6",  # Davis+int (CPT)
+    7: "#319aca",  # Davis+int (CPT)
     8: "#9a6324",  # Tan-phi (CPT)
-    9: "#008080",  # Tan-phi+int (CPT)
-    10: "#ffd54f",  # RY5.avg  (light gold)
-    11: "#b8860b",  # RY5.caut (dark gold)
+    9: "#473C16",  # Tan-phi+int (CPT)
+    10: "#ffd23d",  # RY5.avg  (light gold)
+    13: "#c4a131dd",  # RY5.avg+(c.int)  (orange) 
+    11: "#35dda5",  # RY5.caut (dark gold)
+    14: "#28a078",  # RY5.caut+(c.int) (dark orange)
 }
 _EMB_LABELS = {
     0: "Original",
@@ -96,7 +105,9 @@ _EMB_LABELS = {
     8: "Tan-phi (CPT)",
     9: "Tan-phi+int (CPT)",
     10: "RY5.avg",
+    13: "RY5.avg+(c.int)",
     11: "RY5.caut",
+    14: "RY5.caut+(c.int)",
 }
 
 # Single representative color per case for focused plots
@@ -114,7 +125,7 @@ _EMB_FAMILIES = {
     "Clay (lab)": [3, 4, 5],
     "CPT Davis": [6, 7],
     "CPT Tan-phi": [8, 9],
-    "RY5 gen.": [10, 11],
+    "RY5 gen.": [10, 13, 11, 14],
 }
 _FAMILY_COLORS = {
     "Original": "#555555",
@@ -260,6 +271,7 @@ def load_combined(name: str) -> pd.DataFrame:
     pivot = pivot.rename(columns={"base_id": "run_id"})
 
     merged = df_runs.merge(pivot, on="run_id", how="left")
+    merged = merged.drop_duplicates(subset="run_id", keep="first")
 
     # Baseline FoS values (may not exist for all cases)
     bl_rows = merged.loc[merged["run_id"] == "baseline"]
@@ -335,6 +347,7 @@ def load_for_method(name: str, fos_col: str) -> pd.DataFrame:
     pivot = pivot.rename(columns={"base_id": "run_id"})
 
     merged = df_runs.merge(pivot, on="run_id", how="left")
+    merged = merged.drop_duplicates(subset="run_id", keep="first")
 
     bl_rows = merged.loc[merged["run_id"] == "baseline"]
     has_baseline = (
@@ -817,13 +830,25 @@ def plot_case_strip(
     if df.empty:
         return
 
-    n_sub = len(_SUBSOIL_ORDER)
-    n_cases = len(_STRIP_CASES)
-    group_w = n_sub + 1  # 4 subsoil slots + 1 gap
+    # Per-case subsoil order: pernio gets models 15 & 16 next to Original
+    _case_sub_order = {
+        case: (_PERNIO_SUBSOIL_ORDER if case == "pernio" else _SUBSOIL_ORDER)
+        for case in _STRIP_CASES
+    }
+
+    # Variable-width groups: each case group is as wide as its subsoil list
+    _gap = 1
+    case_widths = [len(_case_sub_order[c]) for c in _STRIP_CASES]
+    case_offsets = []
+    _off = 0
+    for w in case_widths:
+        case_offsets.append(_off)
+        _off += w + _gap
+    total_width = _off - _gap
 
     def xc(case_idx, sub_idx, emb):
         jitter = (emb % 5 - 2) * 0.09
-        return case_idx * group_w + sub_idx + jitter
+        return case_offsets[case_idx] + sub_idx + jitter
 
     title_suffix = (
         "(\u25cf constrained, \u00d7 unconstrained)"
@@ -841,12 +866,13 @@ def plot_case_strip(
         if row["variant"] not in variants:
             continue
         s = row["subsoil"]
-        if s not in _SUBSOIL_ORDER:
-            continue
-        si = _SUBSOIL_ORDER.index(s)
         case = row["case"]
         if case not in _STRIP_CASES:
             continue
+        sub_order = _case_sub_order[case]
+        if s not in sub_order:
+            continue
+        si = sub_order.index(s)
         ci = _STRIP_CASES.index(case)
         e = row["emb"]
         x = xc(ci, si, e)
@@ -891,17 +917,19 @@ def plot_case_strip(
 
     xtick_pos, xtick_labels = [], []
     for ci, case in enumerate(_STRIP_CASES):
+        sub_order = _case_sub_order[case]
         if ci > 0:
-            ax.axvline(ci * group_w - 0.5, color="#cccccc", lw=1.0, zorder=1)
-        for si in range(n_sub):
-            xtick_pos.append(ci * group_w + si)
-            xtick_labels.append(_SUBSOIL_LABELS[_SUBSOIL_ORDER[si]])
+            ax.axvline(case_offsets[ci] - 0.5, color="#cccccc", lw=1.0, zorder=1)
+        for si, s in enumerate(sub_order):
+            xtick_pos.append(case_offsets[ci] + si)
+            xtick_labels.append(_SUBSOIL_LABELS[s])
 
     ax.set_xticks(xtick_pos)
     ax.set_xticklabels(xtick_labels, rotation=40, ha="right", fontsize=8)
 
     for ci, case in enumerate(_STRIP_CASES):
-        mid_x = ci * group_w + (n_sub - 1) / 2
+        sub_order = _case_sub_order[case]
+        mid_x = case_offsets[ci] + (len(sub_order) - 1) / 2
         ax.text(
             mid_x,
             1.52,
@@ -914,13 +942,15 @@ def plot_case_strip(
             bbox=dict(boxstyle="round,pad=0.2", fc="#f0f0f0", ec="#cccccc", lw=0.8),
         )
 
-    ax.set_xlim(-0.8, n_cases * group_w - 1.3)
+    ax.set_xlim(-0.8, total_width - 0.2)
     ax.set_ylim(0.4, 1.6)
     ax.set_yticks(np.arange(0.4, 1.61, 0.1))
     ax.set_ylabel("FoS")
     ax.grid(axis="y", alpha=0.25, lw=0.5)
 
-    present_embs = sorted(df["emb"].unique())
+    present = set(df["emb"].dropna().astype(int))
+    present_embs = [e for e in _EMB_LABELS if e in present]
+
     handles = [
         plt.Line2D(
             [0],
@@ -1009,6 +1039,8 @@ def plot_subsoil_trend(out_path, method, variant="cons"):
         return
 
     df = df[(df["emb"] == 0) & (df["variant"] == variant)].copy()
+    # Keep only standard subsoil models (excludes pernio-specific 15, 16)
+    df = df[df["subsoil"].isin(_SUBSOIL_ORDER)]
     if df.empty:
         return
 
@@ -1208,7 +1240,8 @@ def plot_subsoil_strip(
     ax.set_ylabel("FoS")
     ax.grid(axis="y", alpha=0.25, lw=0.5)
 
-    present_embs = sorted(df["emb"].unique())
+    present = set(df["emb"].dropna().astype(int))
+    present_embs = [e for e in _EMB_LABELS if e in present]
     handles = []
     for e in present_embs:
         handles.append(
@@ -2002,6 +2035,8 @@ def main():
         5,
         10,
         11,
+        13,
+        14,
     ]  # Original, RY4, RY5, RY5.avg, RY5.caut — LNA dimmed
 
     for method in _strip_methods():
