@@ -79,19 +79,19 @@ _SUBSOIL_LABELS = {
 
 _EMB_COLORS = {
     0: "#000000",  # Original
-    1: "#e6194b",  # Sand assoc.
-    2: "#f58231",  # Sand non-assoc.
-    3: "#3cb44b",  # LNA clay
-    4: "#4363d8",  # RY4 clay
+    1: "#FF0000",  # Sand assoc.          (bright red)
+    2: "#FFA500",  # Sand non-assoc.      (bright orange)
+    3: "#00AA00",  # LNA clay             (bright green)
+    4: "#0066CC",  # RY4 clay
     5: "#911eb4",  # RY5 clay
-    6: "#42d4f4",  # Davis (CPT)
-    7: "#319aca",  # Davis+int (CPT)
-    8: "#9a6324",  # Tan-phi (CPT)
-    9: "#473C16",  # Tan-phi+int (CPT)
-    10: "#ffd23d",  # RY5.avg  (light gold)
-    13: "#c4a131dd",  # RY5.avg+(c.int)  (orange) 
-    11: "#35dda5",  # RY5.caut (dark gold)
-    14: "#28a078",  # RY5.caut+(c.int) (dark orange)
+    6: "#1E90FF",  # Davis (CPT)          (dodger blue)
+    7: "#00008B",  # Davis+int (CPT)      (dark blue)
+    8: "#8B4513",  # Tan-phi (CPT)        (saddle brown)
+    9: "#9932CC",  # Tan-phi+int (CPT)    (dark orchid purple)
+    10: "#FFD700",  # RY5.avg            (gold)
+    13: "#00FF00",  # RY5.avg+(c.int)    (lime green)
+    11: "#FF00FF",  # RY5.caut           (magenta)
+    14: "#008080",  # RY5.caut+(c.int)   (teal)
 }
 _EMB_LABELS = {
     0: "Original",
@@ -108,6 +108,22 @@ _EMB_LABELS = {
     13: "RY5.avg+(c.int)",
     11: "RY5.caut",
     14: "RY5.caut+(c.int)",
+}
+
+# Marker shape per embankment — one distinct shape per family for readability
+_EMB_MARKER = {
+    0: "D",   # Original          — diamond
+    1: "^",   # Sand assoc.       — triangle up  (Sand lab)
+    2: "^",   # Sand non-assoc.   — triangle up  (Sand lab)
+    3: "s",   # LNA clay          — square       (Clay lab)
+    6: "P",   # Davis (CPT)       — filled plus  (CPT Davis)
+    7: "P",   # Davis+int (CPT)   — filled plus  (CPT Davis)
+    8: "*",   # Tan-phi (CPT)     — star         (CPT Tan-phi)
+    9: "*",   # Tan-phi+int (CPT) — star         (CPT Tan-phi)
+    10: "o",  # RY5.avg           — circle       (RY5 gen.)
+    11: "o",  # RY5.caut          — circle       (RY5 gen.)
+    13: "o",  # RY5.avg+(c.int)   — circle       (RY5 gen.)
+    14: "o",  # RY5.caut+(c.int)  — circle       (RY5 gen.)
 }
 
 # Single representative color per case for focused plots
@@ -817,12 +833,17 @@ def plot_case_strip(
     active_embs: list = None,
     active_cases: list = None,
     active_subsoils: list = None,
+    filter_subsoils: list = None,
+    filter_embs: list = None,
+    pop_replaced_only: bool = False,
 ) -> None:
     """Like plot_subsoil_strip but with axes swapped:
     Outer groups = cases (Bergambacht, Eemdijk, IJkdijk, Pernio).
     Inner X positions = subsoil models (Original, LNA, RY4, RY5, ...).
     Color = embankment type.  Fill = POP state.
     active_embs / active_cases / active_subsoils: full alpha when active, 0.05 otherwise.
+    filter_subsoils / filter_embs: hard filter — excluded items are not shown at all.
+    pop_replaced_only: when True only POP-replaced (filled) constrained points are shown.
     """
     import numpy as np
 
@@ -835,6 +856,13 @@ def plot_case_strip(
         case: (_PERNIO_SUBSOIL_ORDER if case == "pernio" else _SUBSOIL_ORDER)
         for case in _STRIP_CASES
     }
+
+    # Hard-filter subsoil slots per case (filter_subsoils removes positions entirely)
+    if filter_subsoils is not None:
+        _case_sub_order = {
+            case: [s for s in order if s in filter_subsoils]
+            for case, order in _case_sub_order.items()
+        }
 
     # Variable-width groups: each case group is as wide as its subsoil list
     _gap = 1
@@ -875,6 +903,13 @@ def plot_case_strip(
         si = sub_order.index(s)
         ci = _STRIP_CASES.index(case)
         e = row["emb"]
+
+        # Hard filters — skip excluded embankments and POP-original points
+        if filter_embs is not None and e not in filter_embs:
+            continue
+        if pop_replaced_only and row["pop"] == 0:
+            continue
+
         x = xc(ci, si, e)
         color = _EMB_COLORS.get(e, "#000000")
         a = (
@@ -889,11 +924,12 @@ def plot_case_strip(
 
         if row["variant"] == "cons":
             pop_matched = row["pop"] != 0
+            marker = _EMB_MARKER.get(e, "o")
             ax.scatter(
                 x,
                 row["fos"],
-                marker="o",
-                s=22,
+                marker=marker,
+                s=28,
                 facecolors=color if pop_matched else "none",
                 edgecolors=color,
                 linewidths=0.4 if pop_matched else 1.6,
@@ -901,18 +937,21 @@ def plot_case_strip(
                 alpha=a,
             )
         else:
+            marker = _EMB_MARKER.get(e, "o")
             ax.scatter(
                 x,
                 row["fos"],
                 color=color,
-                marker="x",
-                s=22,
+                marker=marker,
+                s=28,
                 linewidths=1.0,
                 zorder=4,
                 alpha=a,
             )
 
     _draw_sigma_bands(ax)
+    ax.axhline(1.1, color="#4caf50", lw=0.8, ls="--", alpha=0.6, zorder=2)
+    ax.axhline(1.05, color="#ff9800", lw=0.8, ls="--", alpha=0.6, zorder=2)
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
 
     xtick_pos, xtick_labels = [], []
@@ -949,23 +988,25 @@ def plot_case_strip(
     ax.grid(axis="y", alpha=0.25, lw=0.5)
 
     present = set(df["emb"].dropna().astype(int))
+    if filter_embs is not None:
+        present = present & set(filter_embs)
     present_embs = [e for e in _EMB_LABELS if e in present]
 
     handles = [
         plt.Line2D(
             [0],
             [0],
-            marker="o",
+            marker=_EMB_MARKER.get(e, "o"),
             color="w",
             markerfacecolor=_EMB_COLORS[e],
-            markeredgecolor="#333",
-            markersize=7,
+            markeredgecolor=_EMB_COLORS[e],
+            markersize=8,
             linestyle="None",
             label=_EMB_LABELS[e],
         )
         for e in present_embs
     ]
-    if "cons" in variants:
+    if "cons" in variants and not pop_replaced_only:
         handles.append(
             plt.Line2D(
                 [0],
@@ -979,19 +1020,20 @@ def plot_case_strip(
                 label="Cons, POP replaced",
             )
         )
-        handles.append(
-            plt.Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor="none",
-                markeredgecolor="#888",
-                markersize=7,
-                linestyle="None",
-                label="Cons, POP original",
+        if not pop_replaced_only:
+            handles.append(
+                plt.Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor="none",
+                    markeredgecolor="#888",
+                    markersize=7,
+                    linestyle="None",
+                    label="Cons, POP original",
+                )
             )
-        )
     if "nocons" in variants:
         handles.append(
             plt.Line2D(
@@ -1007,6 +1049,12 @@ def plot_case_strip(
     handles.append(
         plt.Line2D([0], [0], color="#c0392b", lw=1.0, ls=":", label="FoS = 1.0")
     )
+    handles.append(
+        plt.Line2D([0], [0], color="#ff9800", lw=0.8, ls="--", label="FoS = 1.05")
+    )
+    handles.append(
+        plt.Line2D([0], [0], color="#4caf50", lw=0.8, ls="--", label="FoS = 1.1")
+    )
     ax.legend(
         handles=handles,
         fontsize=7,
@@ -1018,6 +1066,111 @@ def plot_case_strip(
         title_fontsize=8,
     )
 
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def plot_fos_heatmaps(out_path, method, variant="cons"):
+    """Create 2×2 grid of heatmaps showing FoS for all embankment×subsoil combos per case.
+    
+    Each cell = FoS value, color-coded by safety zone:
+    - Red (< 1.0), Orange (1.0-1.05), Yellow (1.05-1.1), Green (≥ 1.1)
+    Rows = embankment types, Columns = subsoil models per case.
+    """
+    import numpy as np
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+    import seaborn as sns
+
+    fos_col = f"FoS_{method}"
+    df = _load_strip_data(fos_col)
+    if df.empty:
+        return
+
+    # Filter to constrained variant
+    df = df[df["variant"] == variant].copy()
+
+    # Create 2×2 grid
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    axes = axes.flatten()
+
+    # Define custom colormap for safety zones
+    colors = ["#c0392b", "#ff9800", "#fff9c4", "#4caf50"]  # Red, Orange, Light Yellow, Green
+    boundaries = [0.4, 1.0, 1.05, 1.1, 1.6]
+    cmap = ListedColormap(colors)
+    norm = BoundaryNorm(boundaries, cmap.N)
+
+    # Embankment order (same as used in scatter plots)
+    all_embs = sorted(df["emb"].unique())
+    emb_labels = {e: _EMB_LABELS.get(e, f"E{e}") for e in all_embs}
+
+    for idx, case in enumerate(_STRIP_CASES):
+        ax = axes[idx]
+        case_df = df[df["case"] == case].copy()
+
+        if case_df.empty:
+            ax.text(0.5, 0.5, f"No data for {case}", ha="center", va="center")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+
+        # Get subsoil order for this case
+        sub_order = (
+            _PERNIO_SUBSOIL_ORDER if case == "pernio" else _SUBSOIL_ORDER
+        )
+
+        # Build pivot table: rows=embankment, cols=subsoil, values=FoS
+        pivot_data = case_df.pivot_table(
+            index="emb", columns="subsoil", values="fos", aggfunc="first"
+        )
+
+        # Reorder columns by subsoil order, keep only those in sub_order
+        pivot_data = pivot_data[[s for s in sub_order if s in pivot_data.columns]]
+
+        # Reorder rows by all_embs
+        pivot_data = pivot_data.reindex([e for e in all_embs if e in pivot_data.index])
+
+        # Plot heatmap
+        sns.heatmap(
+            pivot_data,
+            ax=ax,
+            cmap=cmap,
+            norm=norm,
+            cbar=False,
+            annot=True,
+            fmt=".2f",
+            linewidths=0.5,
+            linecolor="white",
+            cbar_kws={"label": "Factor of Safety"},
+        )
+
+        # Set labels
+        ax.set_xlabel("Subsoil Model", fontsize=10, fontweight="bold")
+        ax.set_ylabel("Embankment Type", fontsize=10, fontweight="bold")
+        ax.set_title(_STRIP_LABELS[case], fontsize=12, fontweight="bold")
+
+        # Replace column labels with subsoil labels
+        col_labels = [_SUBSOIL_LABELS.get(s, f"S{s}") for s in pivot_data.columns]
+        ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+
+        # Replace row labels with embankment labels
+        row_labels = [emb_labels.get(e, f"E{e}") for e in pivot_data.index]
+        ax.set_yticklabels(row_labels, rotation=0, fontsize=8)
+
+    # Add colorbar with zone labels
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cb = plt.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap, norm=norm),
+        cax=cbar_ax,
+        boundaries=boundaries,
+        ticks=[0.7, 1.025, 1.075, 1.35],
+        spacing="proportional",
+    )
+    cb.ax.set_yticklabels(["Critical\n(< 1.0)", "Marginal\n(1.0-1.05)", "Acceptable\n(1.05-1.1)", "Good\n(≥ 1.1)"], fontsize=8)
+    cb.set_label("Safety Zone", fontsize=10, fontweight="bold")
+
+    fig.suptitle(f"Factor of Safety Heatmaps ({method}, {variant})", fontsize=14, fontweight="bold", y=0.995)
+    fig.tight_layout(rect=[0, 0, 0.9, 0.99])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_path.name}")
@@ -2090,6 +2243,19 @@ def main():
                 variants=("cons",),
                 active_cases=_EEM_IJK_CASES,
                 active_subsoils=_EEM_IJK_SOILS,
+            )
+            # Simplified: selected subsoils, no Original/RY4 emb, POP replaced only
+            plot_case_strip(
+                plots_dir / "plot_casestrip_upliftvan_cons_simplified.png",
+                method,
+                variants=("cons",),
+                filter_subsoils=[3, 10, 13, 11, 14],
+                filter_embs=[1, 2, 3, 6, 7, 8, 9, 10, 13, 11, 14],
+                pop_replaced_only=True,
+            )
+            # Heatmap: FoS for all embankment×subsoil combos per case
+            plot_fos_heatmaps(
+                plots_dir / "plot_fos_heatmaps_upliftvan_cons.png", method, variant="cons"
             )
         # Focused subsoil trend plot (E=0, both POP variants)
         plot_subsoil_trend(plots_dir / f"plot_subsoil_trend_{method}.png", method)
