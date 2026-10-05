@@ -63,7 +63,7 @@ def _apply_soil_params(soil: dict, row: pd.Series) -> None:
     if pd.notna(row.get("gamma_wet")):
         soil["VolumetricWeightBelowPhreaticLevel"] = float(row["gamma_wet"])
 
-    if pd.notna(active_model) and active_model:
+    if pd.notna(active_model) and active_model and active_model != "SigmaTau":
         soil["ShearStrengthModelTypeAbovePhreaticLevel"] = active_model
         soil["ShearStrengthModelTypeBelowPhreaticLevel"] = active_model
 
@@ -89,7 +89,10 @@ def _apply_soil_params(soil: dict, row: pd.Series) -> None:
 
     su_table_key = row.get("su_table_key")
     if pd.notna(su_table_key) and su_table_key:
-        _apply_su_table_from_key(soil, su_table_key)
+        if active_model == "SigmaTau":
+            _apply_sigmatau_table_from_key(soil, su_table_key)
+        else:
+            _apply_su_table_from_key(soil, su_table_key)
 
 
 def _reassign_layers(
@@ -273,6 +276,32 @@ def _apply_su_table_from_key(soil: dict, su_table_key: str) -> None:
     soil["ShearStrengthModelTypeAbovePhreaticLevel"] = "SuTable"
     soil["ShearStrengthModelTypeBelowPhreaticLevel"] = "SuTable"
     soil.setdefault("SuTable", {})["SuTablePoints"] = points
+
+
+def _apply_sigmatau_table_from_key(soil: dict, sigmatau_table_key: str) -> None:
+    """Load SigmaTauTable points from a JSON file in the su_tables/ folder."""
+    import json
+
+    project_root = Path(__file__).parent
+    table_path = project_root / "su_tables" / "su_tables.json"
+    if not table_path.exists():
+        print(f"  WARNING: su_tables.json not found: {table_path}")
+        return
+    with open(table_path) as f:
+        all_tables = json.load(f)
+    if sigmatau_table_key not in all_tables:
+        print(f"  WARNING: key '{sigmatau_table_key}' not found in su_tables.json")
+        return
+    points = all_tables[sigmatau_table_key]
+    # Same {EffectiveStress, Su} source format; D-Stability names the strength field ShearStrength here.
+    if isinstance(points, dict):
+        points = [
+            {"EffectiveStress": s, "ShearStrength": su}
+            for s, su in zip(points["EffectiveStress"], points["Su"])
+        ]
+    soil["ShearStrengthModelTypeAbovePhreaticLevel"] = "SigmaTauTable"
+    soil["ShearStrengthModelTypeBelowPhreaticLevel"] = "SigmaTauTable"
+    soil.setdefault("SigmaTauTable", {})["SigmaTauTablePoints"] = points
 
 
 def _apply_pop_changes(data: dict, soil_code: str, label_to_pop: dict) -> None:

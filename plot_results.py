@@ -950,8 +950,8 @@ def plot_case_strip(
             )
 
     _draw_sigma_bands(ax)
-    ax.axhline(1.1, color="#4caf50", lw=0.8, ls="--", alpha=0.6, zorder=2)
-    ax.axhline(1.05, color="#ff9800", lw=0.8, ls="--", alpha=0.6, zorder=2)
+    # ax.axhline(1.1, color="#4caf50", lw=0.8, ls="--", alpha=0.6, zorder=2)
+    # ax.axhline(1.05, color="#ff9800", lw=0.8, ls="--", alpha=0.6, zorder=2)
     ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=3)
 
     xtick_pos, xtick_labels = [], []
@@ -1049,12 +1049,12 @@ def plot_case_strip(
     handles.append(
         plt.Line2D([0], [0], color="#c0392b", lw=1.0, ls=":", label="FoS = 1.0")
     )
-    handles.append(
-        plt.Line2D([0], [0], color="#ff9800", lw=0.8, ls="--", label="FoS = 1.05")
-    )
-    handles.append(
-        plt.Line2D([0], [0], color="#4caf50", lw=0.8, ls="--", label="FoS = 1.1")
-    )
+    # handles.append(
+    #     plt.Line2D([0], [0], color="#ff9800", lw=0.8, ls="--", label="FoS = 1.05")
+    # )
+    # handles.append(
+    #     plt.Line2D([0], [0], color="#4caf50", lw=0.8, ls="--", label="FoS = 1.1")
+    # )
     ax.legend(
         handles=handles,
         fontsize=7,
@@ -2162,6 +2162,129 @@ def plot_cpt_gain(out_path: Path, method: str) -> None:
     print(f"\n  Saved: {out_path.name}")
 
 
+def plot_report_sand_strength(out_path: Path, method: str = "upliftvan") -> None:
+    """Absolute FoS for Eemdijk and IJkdijk, comparing the Davis (non-associative)
+    vs tan(phi) (associative) CPT sand-strength formulations across subsoil models.
+    Constrained, original POP only. Y axis centred on FoS = 1.0 with the
+    +-0.05 / +-0.10 tolerance bands used elsewhere in this project.
+    """
+    import numpy as np
+
+    _SAND_GROUPS = {
+        "Davis (non-assoc.)": ([6, 7], _FAMILY_COLORS["CPT Davis"]),
+        "tan(phi) (assoc.)": ([8, 9], _FAMILY_COLORS["CPT Tan-phi"]),
+    }
+    _TARGET_CASES = ["eemdijk", "ijkdijk"]
+    _TARGET_SUBSOILS = [0, 4, 5, 10, 11, 13, 14]
+
+    df = _load_strip_data(f"FoS_{method}")
+    df = df[(df["variant"] == "cons") & (df["pop"] == 0)].copy()
+    if df.empty:
+        return
+
+    cases = [c for c in _TARGET_CASES if c in df["case"].unique()]
+    if not cases:
+        return
+
+    fig, axes = plt.subplots(
+        1, len(cases), figsize=(4.5 * len(cases), 4.5), squeeze=False, sharey=True
+    )
+    fig.suptitle(
+        "Sand embankment strength formulation \u2014 Davis vs tan(\u03c6) "
+        f"(K\u2080 = 0.5, {method}, constrained, original POP)",
+        fontsize=11,
+        fontweight="bold",
+    )
+
+    xvals = list(range(len(_TARGET_SUBSOILS)))
+    xlabels = [_SUBSOIL_LABELS[s] for s in _TARGET_SUBSOILS]
+
+    for col, case in enumerate(cases):
+        ax = axes[0][col]
+        dc = df[df["case"] == case]
+
+        # Original embankment reference line
+        orig_xs, orig_ys = [], []
+        for i, s in enumerate(_TARGET_SUBSOILS):
+            row = dc[(dc["subsoil"] == s) & (dc["emb"] == 0)]["fos"]
+            if not row.empty:
+                orig_xs.append(i)
+                orig_ys.append(row.iloc[0])
+        if orig_xs:
+            ax.plot(
+                orig_xs,
+                orig_ys,
+                color=_FAMILY_COLORS["Original"],
+                lw=1.6,
+                ls="--",
+                marker="D",
+                markersize=5,
+                zorder=3,
+                label="Original embankment",
+            )
+
+        for fam_name, (embs, color) in _SAND_GROUPS.items():
+            xs, medians, mins, maxs = [], [], [], []
+            for i, s in enumerate(_TARGET_SUBSOILS):
+                values = []
+                for e in embs:
+                    row = dc[(dc["subsoil"] == s) & (dc["emb"] == e)]["fos"]
+                    if not row.empty:
+                        values.append(row.iloc[0])
+                if not values:
+                    continue
+                xs.append(i)
+                medians.append(float(np.median(values)))
+                mins.append(min(values))
+                maxs.append(max(values))
+
+            if not xs:
+                continue
+            ax.fill_between(xs, mins, maxs, color=color, alpha=0.2, zorder=2)
+            ax.plot(
+                xs,
+                medians,
+                color=color,
+                lw=2.0,
+                marker="o",
+                markersize=6,
+                zorder=4,
+                label=fam_name,
+            )
+
+        _draw_sigma_bands(ax)
+        ax.axhline(1.0, color="#c0392b", lw=1.0, ls=":", alpha=0.9, zorder=4)
+        ax.set_xticks(xvals)
+        ax.set_xticklabels(xlabels, rotation=30, ha="right")
+        ax.set_title(_STRIP_LABELS[case], fontsize=11, fontweight="bold")
+        ax.grid(axis="y", alpha=0.3, lw=0.5)
+        if col == 0:
+            ax.set_ylabel("FoS")
+
+    for ax in axes[0]:
+        ax.set_ylim(0.5, 1.5)
+        ax.set_yticks(np.arange(0.5, 1.51, 0.1))
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    handles.append(
+        plt.Line2D([0], [0], color="#c0392b", lw=1.0, ls=":", label="FoS = 1.0")
+    )
+    labels.append("FoS = 1.0")
+    fig.legend(
+        handles=handles,
+        labels=labels,
+        fontsize=9,
+        loc="lower center",
+        ncol=4,
+        bbox_to_anchor=(0.5, -0.05),
+        framealpha=0.85,
+    )
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2269,6 +2392,9 @@ def main():
         plot_cpt_gain(plots_dir / f"plot_cpt_gain_{method}.png", method)
     # Combined cons+nocons plot (one subplot per FoS method)
     plot_combined(plots_dir / "plot_fos_combined.png")
+
+    # Report figure: Davis vs tan(phi) sand-strength formulation (Eemdijk + IJkdijk)
+    plot_report_sand_strength(plots_dir / "report_sand_strength.png")
 
     # % change from baseline (bergambacht v1 excluded, using v2 instead)
     dfs_orig = {k: v for k, v in dfs.items() if k != "bergambacht"}
