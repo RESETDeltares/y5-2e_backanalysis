@@ -3,7 +3,8 @@ from typing import List
 from dataclasses import dataclass
 from pathlib import Path
 
-DSTABILITY_BIN_FOLDER = r"C:\Program Files\Deltares\D-GEO Suite\D-Stability 2025.01\bin"
+# DSTABILITY_BIN_FOLDER = r"C:\Program Files\Deltares\D-GEO Suite\D-Stability 2025.01\bin"
+DSTABILITY_BIN_FOLDER = r"C:\DStability_2026-10-07"
 
 
 SOIL_COLLECTION_CONVERT = {
