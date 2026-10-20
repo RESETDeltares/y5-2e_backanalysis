@@ -60,21 +60,21 @@ _STRIP_LABELS = {
     "pernio": "Pernio",
 }
 
-_SUBSOIL_ORDER = [0, 3, 4, 5, 10, 13, 11, 14]
+_SUBSOIL_ORDER = [0, 3, 4, 5, 11, 14, 10, 13]
 # Pernio-specific order: adds models 15 (avg mobilization) and 16 (cautious mobilization)
 # right next to the Original subsoil
-_PERNIO_SUBSOIL_ORDER = [0, 15, 16, 3, 4, 5, 10, 13, 11, 14]
+_PERNIO_SUBSOIL_ORDER = [0, 16, 15, 3, 4, 5, 11, 14, 10, 13]
 _SUBSOIL_LABELS = {
     0: "Original",
     3: "LNA",
     4: "RY4",
     5: "RY5",
-    10: "RY5.avg",
-    13: "RY5.avg+(c.int)",
     11: "RY5.caut",
     14: "RY5.caut+(c.int)",
-    15: "Orig.avg.mob.",
+    10: "RY5.avg",
+    13: "RY5.avg+(c.int)",
     16: "Orig.caut.mob.",
+    15: "Orig.avg.mob.",
 }
 
 _EMB_COLORS = {
@@ -88,10 +88,10 @@ _EMB_COLORS = {
     7: "#00008B",  # Davis+int (CPT)      (dark blue)
     8: "#8B4513",  # Tan-phi (CPT)        (saddle brown)
     9: "#9932CC",  # Tan-phi+int (CPT)    (dark orchid purple)
-    10: "#FFD700",  # RY5.avg            (gold)
-    13: "#00FF00",  # RY5.avg+(c.int)    (lime green)
     11: "#FF00FF",  # RY5.caut           (magenta)
     14: "#008080",  # RY5.caut+(c.int)   (teal)
+    10: "#FFD700",  # RY5.avg            (gold)
+    13: "#00FF00",  # RY5.avg+(c.int)    (lime green)
 }
 _EMB_LABELS = {
     0: "Original",
@@ -104,10 +104,10 @@ _EMB_LABELS = {
     7: "Davis+int (CPT)",
     8: "Tan-phi (CPT)",
     9: "Tan-phi+int (CPT)",
-    10: "RY5.avg",
-    13: "RY5.avg+(c.int)",
     11: "RY5.caut",
     14: "RY5.caut+(c.int)",
+    10: "RY5.avg",
+    13: "RY5.avg+(c.int)",
 }
 
 # Marker shape per embankment — one distinct shape per family for readability
@@ -120,10 +120,10 @@ _EMB_MARKER = {
     7: "P",   # Davis+int (CPT)   — filled plus  (CPT Davis)
     8: "*",   # Tan-phi (CPT)     — star         (CPT Tan-phi)
     9: "*",   # Tan-phi+int (CPT) — star         (CPT Tan-phi)
-    10: "o",  # RY5.avg           — circle       (RY5 gen.)
     11: "o",  # RY5.caut          — circle       (RY5 gen.)
-    13: "o",  # RY5.avg+(c.int)   — circle       (RY5 gen.)
     14: "o",  # RY5.caut+(c.int)  — circle       (RY5 gen.)
+    10: "o",  # RY5.avg           — circle       (RY5 gen.)
+    13: "o",  # RY5.avg+(c.int)   — circle       (RY5 gen.)
 }
 
 # Single representative color per case for focused plots
@@ -141,7 +141,7 @@ _EMB_FAMILIES = {
     "Clay (lab)": [3, 4, 5],
     "CPT Davis": [6, 7],
     "CPT Tan-phi": [8, 9],
-    "RY5 gen.": [10, 13, 11, 14],
+    "RY5 gen.": [11, 14, 10, 13],
 }
 _FAMILY_COLORS = {
     "Original": "#555555",
@@ -2309,11 +2309,11 @@ def main():
         0,
         4,
         5,
-        10,
         11,
-        13,
         14,
-    ]  # Original, RY4, RY5, RY5.avg, RY5.caut — LNA dimmed
+        10,
+        13,
+    ]  # Original, RY4, RY5, RY5.caut, RY5.avg — LNA dimmed
 
     for method in _strip_methods():
         # --- plot_strip (subsoil groups, case clusters) ---
@@ -2372,8 +2372,8 @@ def main():
                 plots_dir / "plot_casestrip_upliftvan_cons_simplified.png",
                 method,
                 variants=("cons",),
-                filter_subsoils=[3, 10, 13, 11, 14],
-                filter_embs=[1, 2, 3, 6, 7, 8, 9, 10, 13, 11, 14],
+                filter_subsoils=[3, 11, 14, 10, 13],
+                filter_embs=[1, 2, 3, 6, 7, 8, 9, 11, 14, 10, 13],
                 pop_replaced_only=True,
             )
             # Heatmap: FoS for all embankment×subsoil combos per case
