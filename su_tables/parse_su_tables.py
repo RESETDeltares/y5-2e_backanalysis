@@ -13,6 +13,11 @@ For each table key the following variants are extracted (where columns exist):
   <key>_sigma[_vN]    -> sigma(ln(su))              (log std dev, direct)
   <key>_nonasso[_vN]  -> Tau_davis_nonasso          (non-associative Davis friction)
   <key>_asso[_vN]     -> Tau_tanphi_asso            (associative tan-phi friction)
+  <key>_nonasso_int_princ[_vN] -> Tau_davis_nonasso_int_princ
+  <key>_asso_int_princ[_vN]    -> Tau_tanphi_asso_int_princ
+  <key>_nonasso_int_princ_capilar_v2 -> Tau_davis_nonasso_int_princ_capilar
+  <key>_asso_int_princ_capilar_v2    -> Tau_tanphi_asso_int_princ_capilar
+      (capilar keys always get "_v2", see COLUMN_VERSION_OVERRIDE)
 
 Stress column: 'EffectiveStress' or 'sigma_v_eff_mean_kpa' are both recognized.
 
@@ -57,6 +62,15 @@ VARIANT_COLUMNS = {
     "Tau_tanphi_asso": ("_asso", False),
     "Tau_davis_nonasso_int_princ": ("_nonasso_int_princ", False),
     "Tau_tanphi_asso_int_princ": ("_asso_int_princ", False),
+    "Tau_davis_nonasso_int_princ_capilar": ("_nonasso_int_princ_capilar", False),
+    "Tau_tanphi_asso_int_princ_capilar": ("_asso_int_princ_capilar", False),
+}
+
+# Columns whose keys get a fixed version tag instead of the file's tag
+# (capilar tables were introduced later, so they are released as _v2).
+COLUMN_VERSION_OVERRIDE = {
+    "Tau_davis_nonasso_int_princ_capilar": "_v2",
+    "Tau_tanphi_asso_int_princ_capilar": "_v2",
 }
 
 # Recognized stress column names (mapped to 'EffectiveStress' internally)
@@ -114,7 +128,11 @@ for txt_file in txt_files:
             except (ValueError, IndexError):
                 continue
 
-            out_key = current_key + variant_suffix + version_tag
+            out_key = (
+                current_key
+                + variant_suffix
+                + COLUMN_VERSION_OVERRIDE.get(col_name, version_tag)
+            )
             entry = tables.setdefault(out_key, {"EffectiveStress": [], "Su": []})
             entry["EffectiveStress"].append(stress)
             entry["Su"].append(round(su_val, 6))

@@ -23,7 +23,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from source.stix_io import (
-    get_calc_settings_map,
+    get_scenarios,
     get_soils,
     get_states,
     get_soillayers,
@@ -32,12 +32,6 @@ from source.stix_io import (
 )
 from source.constants.constants import DSTABILITY_BIN_FOLDER
 
-
-ANALYSIS_TYPE_TO_RESULT_KEY = {
-    "BishopBruteForce": "results/bishopbruteforce/bishopbruteforceresult",
-    "UpliftVanParticleSwarm": "results/upliftvanparticleswarm/upliftvanparticleswarmresult",
-    "SpencerGenetic": "results/spencergenetic/spencergeneticresult",
-}
 
 METHOD_LABEL_TO_ANALYSIS_TYPE = {
     "bishop": "BishopBruteForce",
@@ -154,6 +148,9 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
     """
     soils = get_soils(data)
     soil_by_code = {s["Code"]: s for s in soils}
+    code_by_lower = {}
+    for s in soils:
+        code_by_lower.setdefault(s["Code"].strip().lower(), s["Code"])
 
     # Build sorted soillayers key list so layer_s1->index 0, layer_s2->index 1, etc.
     sl_key_list = sorted(
@@ -164,7 +161,10 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
     layer_cols = sorted(c for c in material_rows.columns if c.startswith("layer_s"))
 
     for _, row in material_rows.iterrows():
-        base_code = row["material_code"]
+        base_code = str(row["material_code"]).strip()
+        # Case-insensitive match against STIX soil codes (exact match wins)
+        if base_code not in soil_by_code:
+            base_code = code_by_lower.get(base_code.lower(), base_code)
         raw_desc = row.get("simple_description", "")
         description = "" if pd.isna(raw_desc) else str(raw_desc).strip()
 
@@ -172,13 +172,13 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
         # layer_s1 -> sl_key_list[0], layer_s2 -> sl_key_list[1], etc.
         layer_assignments = {}  # {sl_key: [label, ...]}
         for col in layer_cols:
-            val = str(row.get(col, "") or "").strip()
-            if not val:
+            labels = _split_cell(row.get(col))
+            if not labels:
                 continue
             idx = int(col.replace("layer_s", "")) - 1
             if idx < len(sl_key_list):
                 sl_key = sl_key_list[idx]
-                layer_assignments[sl_key] = [l.strip() for l in val.split(",")]
+                layer_assignments[sl_key] = labels
 
         has_description = bool(description)
         has_layer = bool(layer_assignments)
@@ -223,12 +223,12 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
                 _reassign_layers(data, labels, soil["Id"], sl_key=sl_key)
 
             # POP changes use the clone code
-            layers_col = str(row.get("Layers", "") or "").strip()
-            pop_col = str(row.get("POP", "") or "").strip()
-            if layers_col and pop_col:
-                pop_labels = [s.strip() for s in layers_col.split(",")]
-                pop_vals = [float(s.strip()) for s in pop_col.split(",")]
+            pop_labels = _split_cell(row.get("Layers"))
+            pop_vals = [float(v) for v in _split_cell(row.get("POP"))]
+            if pop_labels and pop_vals:
                 _apply_pop_changes(data, clone_code, dict(zip(pop_labels, pop_vals)))
+
+            _apply_ocr_from_row(data, row)
 
         else:
             # --- Direct-modify path (no description / no layer target) ---
@@ -242,12 +242,12 @@ def apply_material_changes(data: dict, material_rows: pd.DataFrame) -> dict:
             for sl_key, labels in layer_assignments.items():
                 _reassign_layers(data, labels, soil["Id"], sl_key=sl_key)
 
-            layers_col = str(row.get("Layers", "") or "").strip()
-            pop_col = str(row.get("POP", "") or "").strip()
-            if layers_col and pop_col:
-                pop_labels = [s.strip() for s in layers_col.split(",")]
-                pop_vals = [float(s.strip()) for s in pop_col.split(",")]
+            pop_labels = _split_cell(row.get("Layers"))
+            pop_vals = [float(v) for v in _split_cell(row.get("POP"))]
+            if pop_labels and pop_vals:
                 _apply_pop_changes(data, base_code, dict(zip(pop_labels, pop_vals)))
+
+            _apply_ocr_from_row(data, row)
 
     return data
 
@@ -330,6 +330,67 @@ def _apply_pop_changes(data: dict, soil_code: str, label_to_pop: dict) -> None:
                 sp["Stress"]["Pop"] = label_to_pop[label]
 
 
+def _split_cell(value) -> list:
+    """Split a comma-separated Excel cell into stripped strings ([] if empty/NaN)."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return []
+    return [s.strip() for s in str(value).split(",") if s.strip()]
+
+
+def _apply_ocr_from_row(data: dict, row: pd.Series) -> None:
+    """
+    Read Layers / OCR_above / OCR_below from an Excel row and apply them to the
+    matching state-line values. Either OCR column may be left empty to keep the
+    baseline value on that side.
+    """
+    labels = _split_cell(row.get("Layers"))
+    above = [float(v) for v in _split_cell(row.get("OCR_above"))]
+    below = [float(v) for v in _split_cell(row.get("OCR_below"))]
+    if not labels or not (above or below):
+        return
+
+    for name, vals in (("OCR_above", above), ("OCR_below", below)):
+        if vals and len(vals) != len(labels):
+            raise ValueError(
+                f"run {row.get('run_id')} / {row.get('material_code')}: "
+                f"{name} has {len(vals)} values but Layers has {len(labels)} labels."
+            )
+
+    label_to_ocr = {
+        lbl: (above[i] if above else None, below[i] if below else None)
+        for i, lbl in enumerate(labels)
+    }
+    _apply_ocr_changes(data, label_to_ocr)
+
+
+def _apply_ocr_changes(data: dict, label_to_ocr: dict) -> None:
+    """
+    Set OCR on state-line values by label, e.g. {"SP 1": (above, below)}.
+    A None value leaves that side unchanged. Updated sides are forced to
+    StateType "Ocr". Matching is by label only (state lines carry no LayerId).
+    """
+    found = set()
+    for key, states in data.items():
+        if not key.startswith("states/"):
+            continue
+        for state_line in states.get("StateLines", []):
+            for value in state_line.get("Values", []):
+                label = value.get("Label", "")
+                if label not in label_to_ocr:
+                    continue
+                found.add(label)
+                for side, ocr in zip(("Above", "Below"), label_to_ocr[label]):
+                    if ocr is None:
+                        continue
+                    stress = value.setdefault(side, {})
+                    stress["StateType"] = "Ocr"
+                    stress["Ocr"] = ocr
+
+    missing = [lbl for lbl in label_to_ocr if lbl not in found]
+    if missing:
+        print(f"  WARNING: state-line labels not found for OCR: {missing}")
+
+
 # ---------------------------------------------------------------------------
 # D-Stability runner
 # ---------------------------------------------------------------------------
@@ -375,46 +436,92 @@ def strip_constraints(data: dict) -> dict:
     return data
 
 
-def run_dstability(stix_path: Path, analysis_types: list) -> dict:
+def get_calculations(data: dict) -> list:
     """
-    Run D-Stability for each requested analysis type and return FoS per type.
+    List the calculations of the (first) scenario in D-Stability order.
+
+    Each item: {index (1-based, as used by the console), label, analysis_type,
+    result_id, fos_label}. fos_label is the short method name (upliftvan,
+    bishop, spencer) when that method occurs once in the file; when the same
+    method is used by several calculations (e.g. Ondiep/Diep, both Uplift-Van)
+    the calculation's own label is used instead so the columns stay distinct.
+    """
+    scenario = get_scenarios(data)
+    settings_by_id = {
+        v.get("Id"): v
+        for k, v in data.items()
+        if k.startswith("calculationsettings/")
+    }
+
+    calcs = []
+    for i, calc in enumerate(scenario.get("Calculations", []), start=1):
+        settings = settings_by_id.get(calc.get("CalculationSettingsId"), {})
+        calcs.append(
+            {
+                "index": i,
+                "label": (calc.get("Label") or "").strip() or f"calc{i}",
+                "analysis_type": settings.get("AnalysisType"),
+                "result_id": calc.get("ResultId"),
+            }
+        )
+
+    type_counts = {}
+    for c in calcs:
+        type_counts[c["analysis_type"]] = type_counts.get(c["analysis_type"], 0) + 1
+    method_by_type = {at: lbl for lbl, at in METHOD_LABEL_TO_ANALYSIS_TYPE.items()}
+    for c in calcs:
+        at = c["analysis_type"]
+        if type_counts[at] == 1 and at in method_by_type:
+            c["fos_label"] = method_by_type[at]
+        else:
+            c["fos_label"] = c["label"]
+    return calcs
+
+
+def _read_fos(data: dict, result_id) -> float:
+    """Return FactorOfSafety of the result object whose Id matches result_id."""
+    for k, v in data.items():
+        if k.startswith("results/") and isinstance(v, dict) and v.get("Id") == result_id:
+            return v.get("FactorOfSafety")
+    return None
+
+
+def run_dstability(stix_path: Path, calculations: list) -> dict:
+    """
+    Run D-Stability for each calculation (see get_calculations) and return
+    {fos_label: FoS}.
     """
     exe = str(Path(DSTABILITY_BIN_FOLDER) / "D-Stability Console.exe")
-    calc_map = get_calc_settings_map(read_stix(stix_path))
 
     fos_results = {}
-    for analysis_type in analysis_types:
-        if analysis_type not in calc_map:
-            print(
-                f"  WARNING: {analysis_type} not found in STIX calc settings, skipping."
-            )
-            continue
-
-        # D-Stability Console uses 1-based index of calculation in file
-        calc_keys = sorted(
-            k for k in read_stix(stix_path) if k.startswith("calculationsettings/")
+    for calc in calculations:
+        fos_label = calc["fos_label"]
+        print(
+            f"  Running '{calc['label']}' ({calc['analysis_type']}, "
+            f"calc index {calc['index']})..."
         )
-        calc_index = calc_keys.index(calc_map[analysis_type]) + 1
-
-        print(f"  Running {analysis_type} (calc index {calc_index})...")
         try:
             subprocess.run(
-                [exe, str(stix_path), "1", str(calc_index)],
+                [exe, str(stix_path), "1", str(calc["index"])],
                 capture_output=True,
                 check=True,
             )
         except subprocess.CalledProcessError as e:
             print(f"  ERROR running D-Stability: {e}")
-            fos_results[analysis_type] = None
+            fos_results[fos_label] = None
             continue
 
-        # Read result back
+        # ResultId may be (re)assigned by D-Stability, so re-read it from the scenario
         result_data = read_stix(stix_path)
-        result_key = ANALYSIS_TYPE_TO_RESULT_KEY.get(analysis_type)
-        try:
-            fos_results[analysis_type] = result_data[result_key]["FactorOfSafety"]
-        except (KeyError, TypeError):
-            fos_results[analysis_type] = None
+        result_id = next(
+            (
+                c["result_id"]
+                for c in get_calculations(result_data)
+                if c["index"] == calc["index"]
+            ),
+            calc["result_id"],
+        )
+        fos_results[fos_label] = _read_fos(result_data, result_id)
 
     return fos_results
 
@@ -480,16 +587,11 @@ def run_model(stix_path: Path, project_root: Path) -> None:
             print(f"  if_run not TRUE, skipping.")
             continue
 
-        # Run all calc methods present in the STIX file
-        calc_map = get_calc_settings_map(read_stix(stix_path))
-        analysis_types = [
-            at
-            for label, at in METHOD_LABEL_TO_ANALYSIS_TYPE.items()
-            if any(k == at for k in calc_map)
-        ]
+        # Run every calculation defined in the STIX scenario
+        calculations = get_calculations(read_stix(stix_path))
 
-        if not analysis_types:
-            print(f"  No matching calc methods found in STIX, skipping.")
+        if not calculations:
+            print(f"  No calculations found in STIX scenario, skipping.")
             continue
 
         # Load baseline and apply material changes once
@@ -514,7 +616,7 @@ def run_model(stix_path: Path, project_root: Path) -> None:
             write_stix(output_stix, variant_data)
             print(f"  Saved: {output_stix.name}")
 
-            fos_map = run_dstability(output_stix, analysis_types)
+            fos_map = run_dstability(output_stix, calculations)
 
             result_row = {
                 "run_id": variant_id,
@@ -522,10 +624,7 @@ def run_model(stix_path: Path, project_root: Path) -> None:
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "constraints": keep_constraints,
             }
-            for at, fos in fos_map.items():
-                label = next(
-                    (l for l, a in METHOD_LABEL_TO_ANALYSIS_TYPE.items() if a == at), at
-                )
+            for label, fos in fos_map.items():
                 result_row[f"FoS_{label}"] = fos
                 print(f"  FoS ({label}) = {fos}")
 
