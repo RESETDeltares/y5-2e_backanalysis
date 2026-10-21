@@ -19,17 +19,15 @@ The goal is to efficiently explore which parameter combinations best reproduce o
 ```
 backcalculations/
 +-- baseline_models/                # Baseline STIX files + their run Excel files
-|   +-- bergambacht.stix
-|   +-- bergambacht_runs.xlsx       # Run definitions for bergambacht
-|   +-- eemdijk.stix
-|   +-- eemdijk_runs.xlsx
-|   +-- ijkdijk.stix
-|   +-- ijkdijk_runs.xlsx
+|   +-- <model>.stix                # e.g. eemdijk_before, eemdijk_fail, ijkdijk_before,
+|   +-- <model>_runs.xlsx           #      ijkdijk_fail, reevediep_before, reevediep_fail,
+|                                   #      bergambacht_v2, pernio
 |
 +-- results/                        # Auto-created output folder
-|   +-- <model_name>/
+|   +-- <model>/
 |       +-- <run_id>/
-|           +-- <model>_<run_id>.stix   # Modified STIX with D-Stability results
+|           +-- <model>_<run_id>_cons.stix    # Modified STIX with D-Stability results
+|           +-- <model>_<run_id>_nocons.stix  # (constraints removed)
 |
 +-- su_tables/                      # Optional: SuTable JSON files for tabulated strength
 |
@@ -147,10 +145,15 @@ To find the correct soil codes and state point labels for your model, use the ex
 
 ### Step 3 â€” Run the model
 
-Edit the `STIX_FILE` constant at the top of `run_model.py` to point at the model you want:
+Set the models you want to run to `True` in the `MODELS` block at the top of `run_model.py`
+(the names are the `.stix` file names in `baseline_models/`):
 
 ```python
-STIX_FILE = "baseline_models/bergambacht.stix"
+MODELS = {
+    "eemdijk_before": False,
+    "eemdijk_fail":   True,
+    ...
+}
 ```
 
 Then run:
@@ -162,10 +165,12 @@ python run_model.py
 For each run defined in the Excel file, the engine will:
 1. Load the baseline STIX fresh
 2. Apply the parameter overrides from the `materials` sheet
-3. Save the modified STIX to `results/<model>/<run_id>/<model>_<run_id>.stix`
-4. Run D-Stability Console for each enabled calculation method
+3. Save the modified STIX to `results/<model>/<run_id>/<model>_<run_id>_cons.stix` (and `_nocons`)
+4. Run D-Stability Console for each calculation in the STIX scenario
 5. Read the FoS from the result file
 6. Append a row to the `results` sheet in the Excel file
+
+Runs whose output STIX files already exist are skipped, so a model can be re-run to finish incomplete runs.
 
 ### Step 4 â€” Review results
 

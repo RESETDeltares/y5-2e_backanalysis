@@ -3,13 +3,17 @@ Run engine: reads the Excel run sheet, applies parameter changes to the
 baseline STIX file, runs D-Stability, and writes FoS back to the results sheet.
 
 Usage:
-    python run_model.py baseline_models/bergambacht_reviewed.stix
+    1. Set the models to run to True in the USER CONTROL block below.
+    2. Run:  python run_model.py
 
-This reads:
-    baseline_models/bergambacht_reviewed_runs.xlsx
+For every selected model <name> this reads:
+    baseline_models/<name>.stix
+    baseline_models/<name>_runs.xlsx
 
 And writes modified STIX files to:
-    results/bergambacht_reviewed/<run_id>/
+    results/<name>/<run_id>/<name>_<run_id>_cons.stix  (and _nocons)
+
+Runs whose output STIX files already exist are skipped.
 """
 
 import subprocess
@@ -19,6 +23,23 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+
+# =============================================================================
+# USER CONTROL
+# =============================================================================
+
+# True = run this model (baseline_models/<name>.stix), False = skip it.
+MODELS = {
+    "bergambacht_v2":   False,
+    "eemdijk_before":   False,
+    "eemdijk_fail":     True,
+    "ijkdijk_before":   False,
+    "ijkdijk_fail":     True,
+    "pernio":           False,
+    "reevediep_before": False,
+    "reevediep_fail":   False,
+}
 
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -501,13 +522,17 @@ def run_dstability(stix_path: Path, calculations: list) -> dict:
             f"calc index {calc['index']})..."
         )
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [exe, str(stix_path), "1", str(calc["index"])],
                 capture_output=True,
+                text=True,
+                errors="replace",
                 check=True,
             )
+            console_output = proc.stdout + "\n" + proc.stderr
         except subprocess.CalledProcessError as e:
             print(f"  ERROR running D-Stability: {e}")
+            _print_console_messages(f"{e.stdout or ''}\n{e.stderr or ''}")
             fos_results[fos_label] = None
             continue
 
@@ -521,9 +546,39 @@ def run_dstability(stix_path: Path, calculations: list) -> dict:
             ),
             calc["result_id"],
         )
-        fos_results[fos_label] = _read_fos(result_data, result_id)
+        fos = _read_fos(result_data, result_id)
+        if fos is None:
+            print(f"  WARNING: no FoS for '{calc['label']}'. D-Stability reported:")
+            _print_console_messages(console_output)
+        fos_results[fos_label] = fos
 
     return fos_results
+
+
+def _print_console_messages(output: str) -> None:
+    """Print the error lines of D-Stability Console output (or its tail if none)."""
+    lines = [l.strip() for l in output.splitlines() if l.strip()]
+    errors = [l for l in lines if l.lower().startswith(("error", "warning"))]
+    for line in errors or lines[-10:]:
+        print(f"    | {line}")
+
+
+def _append_results(excel_path: Path, rows: list) -> bool:
+    """Append result rows to the 'results' sheet. Returns False if the file is locked."""
+    try:
+        df_existing = pd.read_excel(excel_path, sheet_name="results")
+        df_combined = pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
+        with pd.ExcelWriter(
+            excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            df_combined.to_excel(writer, sheet_name="results", index=False)
+        return True
+    except PermissionError:
+        print(
+            f"  WARNING: cannot write {excel_path.name} (open in Excel?). "
+            f"{len(rows)} result row(s) kept, will retry after the next run."
+        )
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +606,8 @@ def run_model(stix_path: Path, project_root: Path) -> None:
     df_materials = pd.read_excel(excel_path, sheet_name="materials")
 
     output_root.mkdir(parents=True, exist_ok=True)
-    all_results = []
+    pending_results = []  # rows not yet written to Excel (e.g. file was locked)
+    n_written = 0
 
     for _, run_row in df_runs.iterrows():
         run_id = run_row["run_id"]
@@ -628,19 +684,23 @@ def run_model(stix_path: Path, project_root: Path) -> None:
                 result_row[f"FoS_{label}"] = fos
                 print(f"  FoS ({label}) = {fos}")
 
-            all_results.append(result_row)
+            # Save after every run so stopping the script loses at most one run
+            pending_results.append(result_row)
+            if _append_results(excel_path, pending_results):
+                n_written += len(pending_results)
+                pending_results = []
 
-    # Write results back to Excel
-    if all_results:
-        df_new = pd.DataFrame(all_results)
-        df_existing = pd.read_excel(excel_path, sheet_name="results")
-        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        with pd.ExcelWriter(
-            excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace"
-        ) as writer:
-            df_combined.to_excel(writer, sheet_name="results", index=False)
+    if pending_results and _append_results(excel_path, pending_results):
+        n_written += len(pending_results)
+        pending_results = []
+    if pending_results:
+        print(
+            f"\n  ERROR: {len(pending_results)} result row(s) could not be written "
+            f"to {excel_path.name}:"
+        )
+        print(pd.DataFrame(pending_results).to_string(index=False))
 
-    print(f"\n✓ Results written to: {excel_path}")
+    print(f"\n{n_written} result row(s) written to: {excel_path}")
     print(f"{'='*70}\n")
 
 
@@ -648,14 +708,26 @@ def main():
     project_root = Path(__file__).parent
     baseline_dir = project_root / "baseline_models"
 
-    stix_files = sorted(baseline_dir.glob("*.stix"))
-    if not stix_files:
+    available = {p.stem: p for p in sorted(baseline_dir.glob("*.stix"))}
+    if not available:
         print(f"ERROR: No .stix files found in {baseline_dir}")
         sys.exit(1)
 
-    print(f"Found {len(stix_files)} model(s): {[f.name for f in stix_files]}")
+    missing = [name for name, on in MODELS.items() if on and name not in available]
+    if missing:
+        print(f"WARNING: selected in MODELS but no .stix file found: {missing}")
+    unlisted = [name for name in available if name not in MODELS]
+    if unlisted:
+        print(f"NOTE: .stix files not listed in MODELS (skipped): {unlisted}")
 
-    for stix_path in stix_files:
+    selected = [available[name] for name, on in MODELS.items() if on and name in available]
+    if not selected:
+        print("No models selected. Set at least one model to True in MODELS.")
+        return
+
+    print(f"Running {len(selected)} model(s): {[p.stem for p in selected]}")
+
+    for stix_path in selected:
         run_model(stix_path, project_root)
 
 

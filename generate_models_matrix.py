@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).parent
 
 # Preference order for which case's descriptive labels to show per run_id
 # (label text formatting differs slightly between cases for the same code).
-CASES = ["bergambacht_v2", "ijkdijk", "eemdijk", "pernio"]
+CASES = ["bergambacht_v2", "ijkdijk_before", "eemdijk_before", "pernio"]
 
 DESC_COLS = ["subsoil_strength", "POP_states", "embankment_strength"]
 
